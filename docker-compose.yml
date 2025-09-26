@@ -1,0 +1,269 @@
+services:
+  # PostgreSQL Database with Supabase extensions
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dink-house-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dink_house}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-DevPassword123!}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT:-9432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-dink_house}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - supabase-network
+
+  # Supabase Studio (Admin UI)
+  studio:
+    image: supabase/studio:latest
+    container_name: dink-house-studio
+    restart: unless-stopped
+    environment:
+      STUDIO_PG_META_URL: http://pg-meta:8080
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-DevPassword123!}"
+      DEFAULT_ORGANIZATION_NAME: ${DEFAULT_ORGANIZATION_NAME:-Dink House}
+      DEFAULT_PROJECT_NAME: ${DEFAULT_PROJECT_NAME:-Dink House DB}
+      SUPABASE_PUBLIC_URL: http://localhost:${KONG_HTTP_PORT:-9002}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
+      SUPABASE_SERVICE_KEY: ${SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
+    ports:
+      - "${STUDIO_PORT:-9000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-meta:
+        condition: service_started
+      kong:
+        condition: service_started
+    networks:
+      - supabase-network
+
+  # Kong API Gateway
+  kong:
+    image: kong:2.8.1-alpine
+    container_name: dink-house-kong
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_LOG_LEVEL: info
+    ports:
+      - "${KONG_HTTP_PORT:-9002}:8000"
+      - "${KONG_HTTPS_PORT:-9443}:8443"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    volumes:
+      - ./kong-supabase.yml:/var/lib/kong/kong.yml:ro
+    networks:
+      - supabase-network
+
+  # PostgREST - REST API for PostgreSQL
+  rest:
+    image: postgrest/postgrest:v10.2.0
+    container_name: dink-house-rest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-DevPassword123!}@postgres:5432/${POSTGRES_DB:-dink_house}"
+      PGRST_DB_SCHEMA: public,app_auth,content,contact,launch,system,api,events
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      PGRST_JWT_AUD: authenticated
+      PGRST_MAX_ROWS: 1000
+      PGRST_DB_POOL: 10
+      PGRST_DB_POOL_TIMEOUT: 10
+    ports:
+      - "${REST_PORT:-9003}:3000"
+    networks:
+      - supabase-network
+
+  # PostgreSQL Meta API
+  pg-meta:
+    image: supabase/postgres-meta:v0.68.0
+    container_name: dink-house-pg-meta
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: postgres
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: ${POSTGRES_DB:-dink_house}
+      PG_META_DB_USER: ${POSTGRES_USER:-postgres}
+      PG_META_DB_PASSWORD: "${POSTGRES_PASSWORD:-DevPassword123!}"
+    ports:
+      - "${PG_META_PORT:-9080}:8080"
+    networks:
+      - supabase-network
+
+  # GoTrue - Authentication service
+  auth:
+    image: supabase/gotrue:v2.151.0
+    container_name: dink-house-auth
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL:-http://localhost:9002}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-DevPassword123!}@postgres:5432/${POSTGRES_DB:-dink_house}?search_path=auth"
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:-}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP:-true}
+      GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@dinkhouse.com}
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+    ports:
+      - "${AUTH_PORT:-9999}:9999"
+    networks:
+      - supabase-network
+
+  # Realtime - WebSocket service
+  realtime:
+    image: supabase/realtime:v2.25.35
+    container_name: dink-house-realtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-dink_house}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: "${POSTGRES_PASSWORD:-DevPassword123!}"
+      DB_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      REPLICATION_MODE: RLS
+      REPLICATION_POLL_INTERVAL: 100
+      SECURE_CHANNELS: "true"
+      SLOT_NAME: supabase_realtime_rls
+      TEMPORARY_SLOT: "true"
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      APP_NAME: ${REALTIME_APP_NAME:-dink-house-realtime}
+    ports:
+      - "${REALTIME_PORT:-9004}:4000"
+    networks:
+      - supabase-network
+
+  # Storage API
+  storage:
+    image: supabase/storage-api:v0.43.11
+    container_name: dink-house-storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    restart: unless-stopped
+    environment:
+      ANON_KEY: ${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
+      SERVICE_KEY: ${SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      DATABASE_URL: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-DevPassword123!}@postgres:5432/${POSTGRES_DB:-dink_house}"
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imgproxy:5001
+    volumes:
+      - storage_data:/var/lib/storage
+    ports:
+      - "${STORAGE_PORT:-9005}:5000"
+    networks:
+      - supabase-network
+
+  # Image Proxy (for storage)
+  imgproxy:
+    image: darthsim/imgproxy:v3.8.0
+    container_name: dink-house-imgproxy
+    restart: unless-stopped
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_ENABLE_WEBP_DETECTION: "true"
+    volumes:
+      - storage_data:/var/lib/storage:ro
+    networks:
+      - supabase-network
+
+  # Edge Functions (optional)
+  functions:
+    image: supabase/edge-runtime:v1.36.1
+    container_name: dink-house-functions
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU}
+      SUPABASE_DB_URL: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-DevPassword123!}@postgres:5432/${POSTGRES_DB:-dink_house}"
+      VERIFY_JWT: "${FUNCTIONS_VERIFY_JWT:-false}"
+    volumes:
+      - ./api/functions:/home/deno/functions:ro
+      - functions_data:/home/deno/functions_data
+    ports:
+      - "${FUNCTIONS_PORT:-9006}:9000"
+    networks:
+      - supabase-network
+    command:
+      - start
+      - --main-service
+      - /home/deno/functions/main
+
+networks:
+  supabase-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  storage_data:
+    driver: local
+  functions_data:
+    driver: local

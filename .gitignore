@@ -1,0 +1,31 @@
+# Environment files
+.env
+.env.local
+.env.production
+
+# Database
+postgres_data/
+pgadmin_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Backup files
+*.backup
+*.sql.bak
+backup/
+
+# Storage/uploads
+storage/
+uploads/
