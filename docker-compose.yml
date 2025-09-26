@@ -1,3 +1,4 @@
+
 services:
   # PostgreSQL Database with Supabase extensions
   postgres:

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -12,11 +10,12 @@ services:
       - ./cloudflare-tunnel.yml:/etc/cloudflared/config.yml
       - cloudflared-data:/etc/cloudflared
     networks:
-      - supabase_default
+      - default
 
 volumes:
   cloudflared-data:
 
 networks:
-  supabase_default:
+  default:
+    name: dink-house-db_supabase-network
     external: true
