@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS content.pages (
     visibility VARCHAR(50) DEFAULT 'public'
         CHECK (visibility IN ('public', 'private', 'password_protected')),
     password_hash VARCHAR(255),
-    author_id UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
-    editor_id UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    author_id UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
+    editor_id UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     published_at TIMESTAMP WITH TIME ZONE,
     scheduled_at TIMESTAMP WITH TIME ZONE,
     views_count INT DEFAULT 0,
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS content.media_files (
     folder_path VARCHAR(500) DEFAULT '/',
     tags TEXT[],
     metadata JSONB DEFAULT '{}',
-    uploaded_by UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+    uploaded_by UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
     is_public BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS content.revisions (
     meta_data JSONB,
     revision_number INT NOT NULL,
     revision_message TEXT,
-    created_by UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+    created_by UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

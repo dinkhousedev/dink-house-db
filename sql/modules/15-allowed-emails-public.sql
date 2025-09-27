@@ -74,6 +74,13 @@ $$ LANGUAGE plpgsql;
 ALTER TABLE public.allowed_emails ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public access (adjust as needed)
+-- Drop existing policies if they exist
+DROP POLICY IF EXISTS "Enable read access for all users" ON public.allowed_emails;
+DROP POLICY IF EXISTS "Enable insert for authenticated users" ON public.allowed_emails;
+DROP POLICY IF EXISTS "Enable update for authenticated users" ON public.allowed_emails;
+DROP POLICY IF EXISTS "Enable delete for authenticated users" ON public.allowed_emails;
+
+-- Create policies
 CREATE POLICY "Enable read access for all users" ON public.allowed_emails
     FOR SELECT USING (true);
 

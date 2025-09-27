@@ -1,105 +1,100 @@
 #!/bin/bash
 
-# Migration script to apply schema changes to running database
+# Migration script for Dink House Database
+# This script runs all SQL modules and seed data in the correct order
 
-echo "=================================================="
-echo "Starting Database Migration to Schema Structure"
-echo "=================================================="
+set -e
 
-DB_HOST="localhost"
-DB_PORT="9432"
-DB_NAME="dink_house"
-DB_USER="postgres"
-DB_PASS="DevPassword123!"
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Default database connection parameters
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-9432}"
+DB_NAME="${DB_NAME:-dink_house}"
+DB_USER="${DB_USER:-postgres}"
+DB_PASSWORD="${DB_PASSWORD:-DevPassword123!}"
+
+echo -e "${GREEN}=================================================="
+echo "Dink House Database Migration Script"
+echo "=================================================="
+echo -e "${NC}"
 
 # Export password for psql
-export PGPASSWORD=$DB_PASS
+export PGPASSWORD="$DB_PASSWORD"
 
-# Function to run SQL files
-run_sql_file() {
-    local file=$1
-    echo "Running: $file"
-    psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -f "$file" 2>&1
-    if [ $? -eq 0 ]; then
-        echo "✓ Completed: $file"
-    else
-        echo "✗ Failed: $file"
-        return 1
+# Connection string for display (without password)
+echo "Database: ${DB_NAME}"
+echo "Host: ${DB_HOST}:${DB_PORT}"
+echo "User: ${DB_USER}"
+echo ""
+
+# Test database connection
+echo -e "${YELLOW}Testing database connection...${NC}"
+if docker exec dink-house-db psql -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Connection successful${NC}"
+else
+    echo -e "${RED}✗ Failed to connect to database${NC}"
+    echo "Please check your connection parameters and ensure the database is running."
+    exit 1
+fi
+
+echo ""
+echo -e "${GREEN}=================================================="
+echo "Running SQL Modules"
+echo "=================================================="
+echo -e "${NC}"
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SQL_DIR="$SCRIPT_DIR/sql"
+
+# Execute SQL modules in order
+for module in "$SQL_DIR"/modules/*.sql; do
+    if [ -f "$module" ]; then
+        MODULE_NAME=$(basename "$module")
+        echo -e "${YELLOW}Running $MODULE_NAME...${NC}"
+
+        if docker exec -i dink-house-db psql -U "$DB_USER" -d "$DB_NAME" \
+               -v ON_ERROR_STOP=1 < "$module"; then
+            echo -e "${GREEN}✓ Completed $MODULE_NAME${NC}"
+        else
+            echo -e "${RED}✗ Failed to execute $MODULE_NAME${NC}"
+            exit 1
+        fi
     fi
-}
-
-# Run schema modules in order
-echo ""
-echo "Creating schemas..."
-run_sql_file "sql/modules/01-schemas.sql"
+done
 
 echo ""
-echo "Installing extensions..."
-run_sql_file "sql/modules/02-extensions.sql"
-
-echo ""
-echo "Creating auth schema..."
-run_sql_file "sql/modules/03-auth.sql"
-
-echo ""
-echo "Creating content schema..."
-run_sql_file "sql/modules/04-content.sql"
-
-echo ""
-echo "Creating contact schema..."
-run_sql_file "sql/modules/05-contact.sql"
-
-echo ""
-echo "Creating launch schema..."
-run_sql_file "sql/modules/06-launch.sql"
-
-echo ""
-echo "Creating system schema..."
-run_sql_file "sql/modules/07-system.sql"
-
-echo ""
-echo "Creating functions and triggers..."
-run_sql_file "sql/modules/08-functions.sql"
-
-echo ""
-echo "Setting up permissions..."
-run_sql_file "sql/modules/09-permissions.sql"
-
-echo ""
+echo -e "${GREEN}=================================================="
+echo "Running Seed Data"
 echo "=================================================="
-echo "Loading Seed Data"
-echo "=================================================="
+echo -e "${NC}"
+
+# Execute seed data files
+for seed in "$SQL_DIR"/seeds/*.sql; do
+    if [ -f "$seed" ]; then
+        SEED_NAME=$(basename "$seed")
+        echo -e "${YELLOW}Running $SEED_NAME...${NC}"
+
+        if docker exec -i dink-house-db psql -U "$DB_USER" -d "$DB_NAME" \
+               -v ON_ERROR_STOP=1 < "$seed"; then
+            echo -e "${GREEN}✓ Completed $SEED_NAME${NC}"
+        else
+            echo -e "${RED}✗ Failed to execute $SEED_NAME${NC}"
+            exit 1
+        fi
+    fi
+done
 
 echo ""
-echo "Loading users..."
-run_sql_file "sql/seeds/01-users.sql"
-
-echo ""
-echo "Loading content..."
-run_sql_file "sql/seeds/02-content.sql"
-
-echo ""
-echo "Loading system settings..."
-run_sql_file "sql/seeds/03-system.sql"
-
-echo ""
-echo "Loading sample data..."
-run_sql_file "sql/seeds/04-sample-data.sql"
-
-echo ""
-echo "=================================================="
+echo -e "${GREEN}=================================================="
 echo "Migration Complete!"
 echo "=================================================="
+echo -e "${NC}"
 
-# Verify schemas
-echo ""
-echo "Verifying schemas created:"
-psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -c "\dn"
-
-echo ""
-echo "Verifying tables in auth schema:"
-psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -c "\dt auth.*"
-
-echo ""
-echo "Database migration completed successfully!"
-echo "Access Supabase Studio at: http://localhost:9000"
+# Clean up
+unset PGPASSWORD

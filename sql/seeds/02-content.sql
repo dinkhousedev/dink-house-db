@@ -28,7 +28,7 @@ SELECT
     'published',
     u.id,
     CURRENT_TIMESTAMP
-FROM content.categories c, auth.users u
+FROM content.categories c, app_auth.admin_users u
 WHERE c.slug = 'blog' AND u.username = 'admin';
 
 INSERT INTO content.pages (title, slug, content, excerpt, meta_title, meta_description, category_id, status, author_id, published_at)
@@ -43,7 +43,7 @@ SELECT
     'published',
     u.id,
     CURRENT_TIMESTAMP
-FROM content.categories c, auth.users u
+FROM content.categories c, app_auth.admin_users u
 WHERE c.slug = 'docs' AND u.username = 'editor';
 
 INSERT INTO content.pages (title, slug, content, excerpt, category_id, status, author_id)
@@ -55,5 +55,5 @@ SELECT
     c.id,
     'draft',
     u.id
-FROM content.categories c, auth.users u
+FROM content.categories c, app_auth.admin_users u
 WHERE c.slug = 'news' AND u.username = 'editor';

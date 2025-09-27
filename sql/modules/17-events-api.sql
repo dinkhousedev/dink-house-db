@@ -212,15 +212,16 @@ SELECT
     e.end_time AS event_end_time,
 
     -- Player details (if registered user)
-    au.email AS user_email,
-    au.raw_user_meta_data->>'full_name' AS user_full_name,
+    COALESCE(ua.email, er.player_email) AS user_email,
+    COALESCE(p.first_name || ' ' || p.last_name, er.player_name) AS user_full_name,
 
     er.created_at,
     er.updated_at
 FROM
     events.event_registrations er
     INNER JOIN events.events e ON er.event_id = e.id
-    LEFT JOIN app_auth.users au ON er.user_id = au.id
+    LEFT JOIN app_auth.players p ON er.user_id = p.id
+    LEFT JOIN app_auth.user_accounts ua ON ua.id = p.account_id
 ORDER BY
     er.registration_time DESC;
 
@@ -333,7 +334,7 @@ SELECT
     -- Parent event details
     pe.title AS parent_event_title,
     pe.event_type,
-    pe.duration_minutes,
+    EXTRACT(EPOCH FROM (pe.end_time - pe.start_time))/60 AS duration_minutes,
 
     -- Instance count
     COUNT(esi.id) AS total_instances,
@@ -352,7 +353,7 @@ FROM
     LEFT JOIN events.event_series_instances esi ON es.id = esi.series_id
     LEFT JOIN events.events e ON esi.event_id = e.id
 GROUP BY
-    es.id, rp.id, pe.id, pe.duration_minutes;
+    es.id, rp.id, pe.id, pe.start_time, pe.end_time;
 
 COMMENT ON VIEW api.event_series_view IS 'Recurring event series with pattern details';
 

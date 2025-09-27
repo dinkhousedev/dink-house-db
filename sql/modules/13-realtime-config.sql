@@ -12,7 +12,10 @@ CREATE PUBLICATION supabase_realtime;
 -- ============================================================================
 
 -- Authentication tables
-ALTER PUBLICATION supabase_realtime ADD TABLE app_auth.users;
+ALTER PUBLICATION supabase_realtime ADD TABLE app_auth.user_accounts;
+ALTER PUBLICATION supabase_realtime ADD TABLE app_auth.admin_users;
+ALTER PUBLICATION supabase_realtime ADD TABLE app_auth.players;
+ALTER PUBLICATION supabase_realtime ADD TABLE app_auth.guest_users;
 ALTER PUBLICATION supabase_realtime ADD TABLE app_auth.sessions;
 
 -- Content tables
@@ -27,7 +30,8 @@ ALTER PUBLICATION supabase_realtime ADD TABLE contact.contact_responses;
 -- Launch campaign tables
 ALTER PUBLICATION supabase_realtime ADD TABLE launch.launch_campaigns;
 ALTER PUBLICATION supabase_realtime ADD TABLE launch.launch_subscribers;
-ALTER PUBLICATION supabase_realtime ADD TABLE launch.notification_queue;
+-- notification_queue table doesn't exist, using launch_notifications instead
+ALTER PUBLICATION supabase_realtime ADD TABLE launch.launch_notifications;
 
 -- System tables
 ALTER PUBLICATION supabase_realtime ADD TABLE system.activity_logs;
@@ -187,7 +191,7 @@ BEGIN
     SELECT p.*, u.username
     INTO v_page
     FROM content.pages p
-    LEFT JOIN app_auth.users u ON p.author_id = u.id
+    LEFT JOIN app_auth.admin_users u ON p.author_id = u.id
     WHERE p.id = p_page_id;
 
     v_payload := jsonb_build_object(
@@ -212,7 +216,7 @@ $$;
 
 -- Table for tracking user presence
 CREATE TABLE IF NOT EXISTS realtime.presence (
-    user_id UUID REFERENCES app_auth.users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES app_auth.user_accounts(id) ON DELETE CASCADE,
     channel TEXT NOT NULL,
     status TEXT DEFAULT 'online',
     last_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -275,7 +279,7 @@ CREATE TABLE IF NOT EXISTS realtime.metrics (
     id UUID PRIMARY KEY DEFAULT public.uuid_generate_v4(),
     channel TEXT NOT NULL,
     event_type TEXT NOT NULL,
-    user_id UUID REFERENCES app_auth.users(id),
+    user_id UUID REFERENCES app_auth.user_accounts(id),
     payload_size INT,
     success BOOLEAN DEFAULT true,
     error_message TEXT,

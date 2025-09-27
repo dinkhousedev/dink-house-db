@@ -23,14 +23,9 @@ ALTER TABLE events.court_availability ENABLE ROW LEVEL SECURITY;
 CREATE OR REPLACE FUNCTION events.is_admin_or_manager()
 RETURNS BOOLEAN AS $$
 BEGIN
-    RETURN EXISTS (
-        SELECT 1
-        FROM app_auth.users
-        WHERE id = auth.uid()
-        AND (
-            raw_user_meta_data->>'role' IN ('admin', 'manager')
-            OR raw_user_meta_data->>'is_admin' = 'true'
-        )
+    RETURN (
+        auth.jwt() ->> 'user_type' = 'admin'
+        AND auth.jwt() ->> 'admin_role' IN ('manager', 'admin', 'super_admin')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -39,11 +34,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION events.is_staff()
 RETURNS BOOLEAN AS $$
 BEGIN
-    RETURN EXISTS (
-        SELECT 1
-        FROM app_auth.users
-        WHERE id = auth.uid()
-        AND raw_user_meta_data->>'role' IN ('admin', 'manager', 'coach')
+    RETURN (
+        auth.jwt() ->> 'user_type' = 'admin'
+        AND auth.jwt() ->> 'admin_role' IN ('admin', 'manager', 'coach', 'super_admin', 'editor')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

@@ -9,7 +9,245 @@ SET search_path TO api, auth, content, contact, launch, system, public;
 -- AUTHENTICATION FUNCTIONS
 -- ============================================================================
 
--- Register new user
+-- Track failed login attempt (returns true if account is now locked)
+CREATE OR REPLACE FUNCTION api.track_failed_login(p_identifier TEXT)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_account RECORD;
+    v_failed_attempts INT;
+    v_locked_until TIMESTAMP WITH TIME ZONE;
+BEGIN
+    -- Locate account by email or admin username
+    SELECT ua.*, au.username AS admin_username
+    INTO v_account
+    FROM app_auth.user_accounts ua
+    LEFT JOIN app_auth.admin_users au ON au.account_id = ua.id
+    WHERE ua.email = lower(p_identifier)
+       OR (au.username = lower(p_identifier))
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN json_build_object('success', false, 'error', 'User not found');
+    END IF;
+
+    UPDATE app_auth.user_accounts
+    SET failed_login_attempts = failed_login_attempts + 1,
+        locked_until = CASE
+            WHEN failed_login_attempts >= 4 THEN CURRENT_TIMESTAMP + INTERVAL '15 minutes'
+            ELSE locked_until
+        END
+    WHERE id = v_account.id
+    RETURNING failed_login_attempts, locked_until
+    INTO v_failed_attempts, v_locked_until;
+
+    RETURN json_build_object(
+        'success', true,
+        'failed_attempts', v_failed_attempts,
+        'is_locked', v_locked_until IS NOT NULL AND v_locked_until > CURRENT_TIMESTAMP,
+        'locked_until', v_locked_until
+    );
+END;
+$$;
+
+-- Login function that returns JSON instead of raising exceptions
+CREATE OR REPLACE FUNCTION api.login_safe(
+    email TEXT,
+    password TEXT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_account app_auth.user_accounts%ROWTYPE;
+    v_admin app_auth.admin_users%ROWTYPE;
+    v_player app_auth.players%ROWTYPE;
+    v_guest app_auth.guest_users%ROWTYPE;
+    v_user_profile JSONB;
+    v_session_id UUID;
+    v_token VARCHAR(255);
+    v_refresh_token VARCHAR(255);
+    v_session_ttl INTERVAL := INTERVAL '24 hours';
+    v_refresh_ttl INTERVAL := INTERVAL '7 days';
+    v_input_email TEXT := email;
+    v_input_password TEXT := password;
+BEGIN
+    -- Find account by email or admin username
+    SELECT ua.*
+    INTO v_account
+    FROM app_auth.user_accounts ua
+    LEFT JOIN app_auth.admin_users au ON au.account_id = ua.id
+    WHERE ua.email = lower(v_input_email)
+       OR (au.username = lower(v_input_email))
+    ORDER BY ua.created_at DESC
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN json_build_object('success', false, 'error', 'Invalid credentials');
+    END IF;
+
+    -- Load persona profile details
+    IF v_account.user_type = 'admin' THEN
+        SELECT * INTO v_admin
+        FROM app_auth.admin_users
+        WHERE account_id = v_account.id;
+
+        IF v_admin IS NULL THEN
+            RETURN json_build_object('success', false, 'error', 'Admin profile not found');
+        END IF;
+
+        v_user_profile := jsonb_build_object(
+            'id', v_admin.id,
+            'username', v_admin.username,
+            'first_name', v_admin.first_name,
+            'last_name', v_admin.last_name,
+            'role', v_admin.role
+        );
+    ELSIF v_account.user_type = 'player' THEN
+        SELECT * INTO v_player
+        FROM app_auth.players
+        WHERE account_id = v_account.id;
+
+        IF v_player IS NULL THEN
+            RETURN json_build_object('success', false, 'error', 'Player profile not found');
+        END IF;
+
+        v_user_profile := jsonb_build_object(
+            'id', v_player.id,
+            'first_name', v_player.first_name,
+            'last_name', v_player.last_name,
+            'display_name', v_player.display_name,
+            'membership_level', v_player.membership_level,
+            'skill_level', v_player.skill_level
+        );
+    ELSE
+        SELECT * INTO v_guest
+        FROM app_auth.guest_users
+        WHERE account_id = v_account.id;
+
+        IF v_guest IS NULL THEN
+            RETURN json_build_object('success', false, 'error', 'Guest profile not found');
+        END IF;
+
+        v_user_profile := jsonb_build_object(
+            'id', v_guest.id,
+            'display_name', v_guest.display_name,
+            'expires_at', v_guest.expires_at
+        );
+    END IF;
+
+    -- Check if account is locked
+    IF v_account.locked_until IS NOT NULL AND v_account.locked_until > CURRENT_TIMESTAMP THEN
+        RETURN json_build_object(
+            'success', false,
+            'error', 'Account is locked. Please try again later.',
+            'locked_until', v_account.locked_until
+        );
+    END IF;
+
+    -- Verify password
+    IF NOT verify_password(v_input_password, v_account.password_hash) THEN
+        PERFORM api.track_failed_login(v_input_email);
+        RETURN json_build_object('success', false, 'error', 'Invalid credentials');
+    END IF;
+
+    -- Check if account is active
+    IF NOT v_account.is_active THEN
+        RETURN json_build_object('success', false, 'error', 'Account is inactive');
+    END IF;
+
+    -- Check if account is verified (guests are exempt)
+    IF v_account.user_type <> 'guest' AND NOT v_account.is_verified THEN
+        RETURN json_build_object('success', false, 'error', 'Please verify your email address');
+    END IF;
+
+    -- Guest-specific checks
+    IF v_account.user_type = 'guest' THEN
+        IF v_account.temporary_expires_at IS NULL OR v_account.temporary_expires_at < CURRENT_TIMESTAMP THEN
+            RETURN json_build_object('success', false, 'error', 'Guest access has expired');
+        END IF;
+
+        IF v_guest IS NULL OR v_guest.expires_at < CURRENT_TIMESTAMP THEN
+            RETURN json_build_object('success', false, 'error', 'Guest access has expired');
+        END IF;
+
+        v_session_ttl := INTERVAL '6 hours';
+        v_refresh_ttl := INTERVAL '12 hours';
+    END IF;
+
+    -- Generate tokens
+    v_token := encode(public.gen_random_bytes(32), 'hex');
+    v_refresh_token := encode(public.gen_random_bytes(32), 'hex');
+
+    -- Create session
+    INSERT INTO app_auth.sessions (
+        account_id,
+        user_type,
+        token_hash,
+        expires_at
+    ) VALUES (
+        v_account.id,
+        v_account.user_type,
+        encode(public.digest(v_token, 'sha256'), 'hex'),
+        CURRENT_TIMESTAMP + v_session_ttl
+    ) RETURNING id INTO v_session_id;
+
+    -- Create refresh token
+    INSERT INTO app_auth.refresh_tokens (
+        account_id,
+        user_type,
+        token_hash,
+        expires_at
+    ) VALUES (
+        v_account.id,
+        v_account.user_type,
+        encode(public.digest(v_refresh_token, 'sha256'), 'hex'),
+        CURRENT_TIMESTAMP + v_refresh_ttl
+    );
+
+    -- Update account metadata
+    UPDATE app_auth.user_accounts
+    SET last_login = CURRENT_TIMESTAMP,
+        failed_login_attempts = 0,
+        locked_until = NULL
+    WHERE id = v_account.id;
+
+    -- Log activity for admins only (activity_logs FK is admin-scoped)
+    IF v_account.user_type = 'admin' AND v_admin IS NOT NULL THEN
+        INSERT INTO system.activity_logs (
+            user_id,
+            action,
+            entity_type,
+            entity_id,
+            details
+        ) VALUES (
+            v_admin.id,
+            'user_login',
+            'session',
+            v_session_id,
+            jsonb_build_object('method', 'password')
+        );
+    END IF;
+
+    RETURN json_build_object(
+        'success', true,
+        'user', jsonb_build_object(
+            'account_id', v_account.id,
+            'user_type', v_account.user_type,
+            'email', v_account.email,
+            'profile', v_user_profile
+        ),
+        'session_token', v_token,
+        'refresh_token', v_refresh_token,
+        'expires_at', (CURRENT_TIMESTAMP + v_session_ttl)
+    );
+END;
+$$;
+
+-- Register new admin user (invite-only)
 CREATE OR REPLACE FUNCTION api.register_user(
     p_email TEXT,
     p_username TEXT,
@@ -22,184 +260,341 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-    v_user_id UUID;
+    v_account_id UUID;
     v_verification_token VARCHAR(255);
     v_password_hash VARCHAR(255);
 BEGIN
-    -- Check if email already exists
-    IF EXISTS (SELECT 1 FROM app_auth.users WHERE email = lower(p_email)) THEN
+    IF EXISTS (SELECT 1 FROM app_auth.user_accounts WHERE email = lower(p_email)) THEN
         RAISE EXCEPTION 'Email already registered';
     END IF;
 
-    -- Check if username already exists
-    IF EXISTS (SELECT 1 FROM app_auth.users WHERE username = lower(p_username)) THEN
+    IF EXISTS (
+        SELECT 1 FROM app_auth.admin_users WHERE username = lower(p_username)
+    ) THEN
         RAISE EXCEPTION 'Username already taken';
     END IF;
 
-    -- Generate password hash
-    v_password_hash := public.crypt(p_password, public.gen_salt('bf', 10));
+    IF NOT EXISTS (
+        SELECT 1 FROM app_auth.allowed_emails
+        WHERE email = lower(p_email)
+          AND is_active = true
+    ) THEN
+        RAISE EXCEPTION 'Email is not authorized for admin signup';
+    END IF;
 
-    -- Generate verification token
-    v_verification_token := encode(public.gen_random_bytes(32), 'hex');
+    v_password_hash := hash_password(p_password);
+    -- Players are auto-verified for now; keep token nullable for future email verification rollout
+    v_verification_token := NULL;
 
-    -- Insert new user
-    INSERT INTO app_auth.users (
+    INSERT INTO app_auth.user_accounts (
         email,
-        username,
         password_hash,
-        first_name,
-        last_name,
-        verification_token,
-        role
+        user_type,
+        is_active,
+        is_verified,
+        verification_token
     ) VALUES (
         lower(p_email),
-        lower(p_username),
         v_password_hash,
+        'admin',
+        true,
+        false,
+        v_verification_token
+    ) RETURNING id INTO v_account_id;
+
+    INSERT INTO app_auth.admin_users (
+        id,
+        account_id,
+        username,
+        first_name,
+        last_name,
+        role
+    ) VALUES (
+        v_account_id,
+        v_account_id,
+        lower(p_username),
         p_first_name,
         p_last_name,
-        v_verification_token,
         'viewer'
-    ) RETURNING id INTO v_user_id;
-
-    -- Log activity
-    INSERT INTO system.activity_logs (
-        user_id,
-        action,
-        entity_type,
-        entity_id,
-        details
-    ) VALUES (
-        v_user_id,
-        'user_registered',
-        'user',
-        v_user_id,
-        jsonb_build_object('email', p_email, 'username', p_username)
     );
 
-    RETURN json_build_object(
+    UPDATE app_auth.allowed_emails
+    SET used_at = CURRENT_TIMESTAMP,
+        used_by = v_account_id
+    WHERE email = lower(p_email);
+
+RETURN json_build_object(
         'success', true,
-        'user_id', v_user_id,
+        'user_id', v_account_id,
         'verification_token', v_verification_token,
         'message', 'Registration successful. Please verify your email.'
     );
 END;
 $$;
 
--- Login user
-CREATE OR REPLACE FUNCTION api.login(
+-- Player signup (public)
+CREATE OR REPLACE FUNCTION api.player_signup(
     p_email TEXT,
-    p_password TEXT
+    p_password TEXT,
+    p_first_name TEXT,
+    p_last_name TEXT,
+    p_display_name TEXT DEFAULT NULL,
+    p_phone TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb
 )
 RETURNS JSON
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-    v_user RECORD;
-    v_session_id UUID;
-    v_token VARCHAR(255);
-    v_refresh_token VARCHAR(255);
+    v_account_id UUID;
+    v_password_hash TEXT;
+    v_verification_token TEXT;
 BEGIN
-    -- Find user
-    SELECT * INTO v_user
-    FROM app_auth.users
-    WHERE email = lower(p_email) OR username = lower(p_email);
-
-    IF v_user IS NULL THEN
-        RAISE EXCEPTION 'Invalid credentials';
+    IF p_email IS NULL OR position('@' IN p_email) = 0 THEN
+        RAISE EXCEPTION 'Invalid email address';
     END IF;
 
-    -- Check if account is locked
-    IF v_user.locked_until IS NOT NULL AND v_user.locked_until > CURRENT_TIMESTAMP THEN
-        RAISE EXCEPTION 'Account is locked. Please try again later.';
+    IF EXISTS (SELECT 1 FROM app_auth.user_accounts WHERE email = lower(p_email)) THEN
+        RAISE EXCEPTION 'Email already registered';
     END IF;
 
-    -- Verify password
-    IF NOT (v_user.password_hash = public.crypt(p_password, v_user.password_hash)) THEN
-        -- Increment failed login attempts
-        UPDATE app_auth.users
-        SET failed_login_attempts = failed_login_attempts + 1,
-            locked_until = CASE
-                WHEN failed_login_attempts >= 4 THEN CURRENT_TIMESTAMP + INTERVAL '15 minutes'
-                ELSE NULL
-            END
-        WHERE id = v_user.id;
+    v_password_hash := hash_password(p_password);
+    v_verification_token := NULL;
 
-        RAISE EXCEPTION 'Invalid credentials';
-    END IF;
-
-    -- Check if user is active
-    IF NOT v_user.is_active THEN
-        RAISE EXCEPTION 'Account is inactive';
-    END IF;
-
-    -- Check if user is verified
-    IF NOT v_user.is_verified THEN
-        RAISE EXCEPTION 'Please verify your email address';
-    END IF;
-
-    -- Generate tokens
-    v_token := encode(public.gen_random_bytes(32), 'hex');
-    v_refresh_token := encode(public.gen_random_bytes(32), 'hex');
-
-    -- Create session
-    INSERT INTO app_auth.sessions (
-        user_id,
-        token_hash,
-        expires_at
+    INSERT INTO app_auth.user_accounts (
+        email,
+        password_hash,
+        user_type,
+        is_active,
+        is_verified,
+        verification_token,
+        metadata
     ) VALUES (
-        v_user.id,
-        encode(public.digest(v_token, 'sha256'), 'hex'),
-        CURRENT_TIMESTAMP + INTERVAL '24 hours'
-    ) RETURNING id INTO v_session_id;
+        lower(p_email),
+        v_password_hash,
+        'player',
+        true,
+        true,
+        v_verification_token,
+        COALESCE(p_metadata, '{}'::jsonb)
+    ) RETURNING id INTO v_account_id;
 
-    -- Create refresh token
-    INSERT INTO app_auth.refresh_tokens (
-        user_id,
-        token_hash,
-        expires_at
+    INSERT INTO app_auth.players (
+        id,
+        account_id,
+        first_name,
+        last_name,
+        display_name,
+        phone
     ) VALUES (
-        v_user.id,
-        encode(public.digest(v_refresh_token, 'sha256'), 'hex'),
-        CURRENT_TIMESTAMP + INTERVAL '7 days'
-    );
-
-    -- Update user last login
-    UPDATE app_auth.users
-    SET last_login = CURRENT_TIMESTAMP,
-        failed_login_attempts = 0,
-        locked_until = NULL
-    WHERE id = v_user.id;
-
-    -- Log activity
-    INSERT INTO system.activity_logs (
-        user_id,
-        action,
-        entity_type,
-        entity_id,
-        details
-    ) VALUES (
-        v_user.id,
-        'user_login',
-        'session',
-        v_session_id,
-        jsonb_build_object('method', 'password')
+        v_account_id,
+        v_account_id,
+        p_first_name,
+        p_last_name,
+        COALESCE(p_display_name, CONCAT_WS(' ', p_first_name, p_last_name)),
+        p_phone
     );
 
     RETURN json_build_object(
         'success', true,
-        'user', json_build_object(
-            'id', v_user.id,
-            'email', v_user.email,
-            'username', v_user.username,
-            'first_name', v_user.first_name,
-            'last_name', v_user.last_name,
-            'role', v_user.role
-        ),
-        'session_token', v_token,
-        'refresh_token', v_refresh_token,
-        'expires_at', (CURRENT_TIMESTAMP + INTERVAL '24 hours')
+        'user_id', v_account_id,
+        'user_type', 'player',
+        'verification_token', v_verification_token,
+        'message', 'Registration successful. Please verify your email.'
     );
+END;
+$$;
+
+-- Guest check-in / lightweight signup
+CREATE OR REPLACE FUNCTION api.guest_check_in(
+    p_display_name TEXT,
+    p_email TEXT DEFAULT NULL,
+    p_phone TEXT DEFAULT NULL,
+    p_metadata JSONB DEFAULT '{}'::jsonb,
+    p_invited_by UUID DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_account RECORD;
+    v_guest RECORD;
+    v_account_id UUID;
+    v_password_hash TEXT;
+    v_session_token TEXT;
+    v_refresh_token TEXT;
+    v_session_ttl INTERVAL := INTERVAL '6 hours';
+    v_refresh_ttl INTERVAL := INTERVAL '12 hours';
+    v_expiration TIMESTAMPTZ := CURRENT_TIMESTAMP + INTERVAL '48 hours';
+    v_admin_user_id UUID;
+BEGIN
+    IF COALESCE(TRIM(p_display_name), '') = '' THEN
+        RAISE EXCEPTION 'Display name is required';
+    END IF;
+
+    -- Attempt to reuse existing guest account by email
+    IF p_email IS NOT NULL THEN
+        SELECT ua.*
+        INTO v_account
+        FROM app_auth.user_accounts ua
+        JOIN app_auth.guest_users gu ON gu.account_id = ua.id
+        WHERE ua.email = lower(p_email)
+          AND ua.user_type = 'guest'
+        LIMIT 1;
+
+        IF FOUND THEN
+            SELECT gu.*
+            INTO v_guest
+            FROM app_auth.guest_users gu
+            WHERE gu.account_id = v_account.id;
+        END IF;
+    END IF;
+
+    IF FOUND THEN
+        -- Ensure guest is still valid
+        IF v_account.temporary_expires_at IS NULL OR v_guest.expires_at < CURRENT_TIMESTAMP THEN
+            -- Treat as expired, force creation of a new account
+            v_account := NULL;
+        ELSE
+            v_account_id := v_account.id;
+            UPDATE app_auth.user_accounts
+            SET temporary_expires_at = v_expiration,
+                metadata = COALESCE(p_metadata, '{}'::jsonb)
+            WHERE id = v_account_id;
+
+            UPDATE app_auth.guest_users
+            SET display_name = p_display_name,
+                email = COALESCE(lower(p_email), email),
+                phone = COALESCE(p_phone, phone),
+                metadata = COALESCE(p_metadata, metadata),
+                expires_at = v_expiration
+            WHERE account_id = v_account_id
+            RETURNING * INTO v_guest;
+        END IF;
+    END IF;
+
+    IF v_account_id IS NULL THEN
+        v_password_hash := hash_password(encode(public.gen_random_bytes(32), 'hex'));
+
+        INSERT INTO app_auth.user_accounts (
+            email,
+            password_hash,
+            user_type,
+            is_active,
+            is_verified,
+            temporary_expires_at,
+            metadata
+        ) VALUES (
+            CASE WHEN p_email IS NOT NULL THEN lower(p_email) ELSE NULL END,
+            v_password_hash,
+            'guest',
+            true,
+            false,
+            v_expiration,
+            COALESCE(p_metadata, '{}'::jsonb)
+        ) RETURNING id INTO v_account_id;
+
+        IF p_invited_by IS NOT NULL THEN
+            SELECT id INTO v_admin_user_id
+            FROM app_auth.admin_users
+            WHERE id = p_invited_by OR account_id = p_invited_by;
+        END IF;
+
+        INSERT INTO app_auth.guest_users (
+            id,
+            account_id,
+            display_name,
+            email,
+            phone,
+            invited_by_admin,
+            expires_at,
+            metadata
+        ) VALUES (
+            v_account_id,
+            v_account_id,
+            p_display_name,
+            CASE WHEN p_email IS NOT NULL THEN lower(p_email) ELSE NULL END,
+            p_phone,
+            v_admin_user_id,
+            v_expiration,
+            COALESCE(p_metadata, '{}'::jsonb)
+        ) RETURNING * INTO v_guest;
+    END IF;
+
+    -- Generate session + refresh tokens for guest access
+    v_session_token := encode(public.gen_random_bytes(32), 'hex');
+    v_refresh_token := encode(public.gen_random_bytes(32), 'hex');
+
+    INSERT INTO app_auth.sessions (
+        account_id,
+        user_type,
+        token_hash,
+        expires_at
+    ) VALUES (
+        v_account_id,
+        'guest',
+        encode(public.digest(v_session_token, 'sha256'), 'hex'),
+        CURRENT_TIMESTAMP + v_session_ttl
+    );
+
+    INSERT INTO app_auth.refresh_tokens (
+        account_id,
+        user_type,
+        token_hash,
+        expires_at
+    ) VALUES (
+        v_account_id,
+        'guest',
+        encode(public.digest(v_refresh_token, 'sha256'), 'hex'),
+        CURRENT_TIMESTAMP + v_refresh_ttl
+    );
+
+    UPDATE app_auth.user_accounts
+    SET last_login = CURRENT_TIMESTAMP,
+        temporary_expires_at = v_expiration
+    WHERE id = v_account_id;
+
+    RETURN json_build_object(
+        'success', true,
+        'user_id', v_account_id,
+        'user_type', 'guest',
+        'guest', jsonb_build_object(
+            'display_name', v_guest.display_name,
+            'email', v_guest.email,
+            'expires_at', v_guest.expires_at
+        ),
+        'session_token', v_session_token,
+        'refresh_token', v_refresh_token,
+        'expires_at', (CURRENT_TIMESTAMP + v_session_ttl)
+    );
+END;
+$$;
+
+-- Login user
+CREATE OR REPLACE FUNCTION api.login(
+    email TEXT,
+    password TEXT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_result JSON;
+    v_success BOOLEAN;
+    v_error TEXT;
+BEGIN
+    v_result := api.login_safe(email, password);
+    v_success := COALESCE((v_result ->> 'success')::BOOLEAN, false);
+
+    IF NOT v_success THEN
+        v_error := COALESCE(v_result ->> 'error', 'Invalid credentials');
+        RAISE EXCEPTION '%', v_error;
+    END IF;
+
+    RETURN v_result;
 END;
 $$;
 
@@ -213,29 +608,40 @@ SECURITY DEFINER
 AS $$
 DECLARE
     v_session_id UUID;
-    v_user_id UUID;
+    v_account_id UUID;
+    v_user_type app_auth.user_type;
+    v_admin_user_id UUID;
 BEGIN
     -- Find and delete session
     DELETE FROM app_auth.sessions
     WHERE token_hash = encode(public.digest(p_session_token, 'sha256'), 'hex')
-    RETURNING id, user_id INTO v_session_id, v_user_id;
+    RETURNING id, account_id, user_type
+    INTO v_session_id, v_account_id, v_user_type;
 
     IF v_session_id IS NULL THEN
         RAISE EXCEPTION 'Invalid session';
     END IF;
 
-    -- Log activity
-    INSERT INTO system.activity_logs (
-        user_id,
-        action,
-        entity_type,
-        entity_id
-    ) VALUES (
-        v_user_id,
-        'user_logout',
-        'session',
-        v_session_id
-    );
+    -- Log activity for admin personas only
+    IF v_user_type = 'admin' THEN
+        SELECT id INTO v_admin_user_id
+        FROM app_auth.admin_users
+        WHERE account_id = v_account_id;
+
+        IF v_admin_user_id IS NOT NULL THEN
+            INSERT INTO system.activity_logs (
+                user_id,
+                action,
+                entity_type,
+                entity_id
+            ) VALUES (
+                v_admin_user_id,
+                'user_logout',
+                'session',
+                v_session_id
+            );
+        END IF;
+    END IF;
 
     RETURN json_build_object(
         'success', true,
@@ -253,19 +659,53 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-    v_user_id UUID;
+    v_account_id UUID;
+    v_user_type app_auth.user_type;
+    v_account RECORD;
+    v_guest RECORD;
     v_new_token VARCHAR(255);
     v_new_refresh_token VARCHAR(255);
+    v_session_ttl INTERVAL := INTERVAL '24 hours';
+    v_refresh_ttl INTERVAL := INTERVAL '7 days';
+    v_admin_user_id UUID;
 BEGIN
-    -- Verify refresh token
-    SELECT user_id INTO v_user_id
+    -- Verify refresh token and retrieve account context
+    SELECT account_id, user_type
+    INTO v_account_id, v_user_type
     FROM app_auth.refresh_tokens
     WHERE token_hash = encode(public.digest(p_refresh_token, 'sha256'), 'hex')
         AND expires_at > CURRENT_TIMESTAMP
         AND revoked_at IS NULL;
 
-    IF v_user_id IS NULL THEN
+    IF v_account_id IS NULL THEN
         RAISE EXCEPTION 'Invalid refresh token';
+    END IF;
+
+    SELECT * INTO v_account
+    FROM app_auth.user_accounts
+    WHERE id = v_account_id;
+
+    IF v_account IS NULL OR NOT v_account.is_active THEN
+        RAISE EXCEPTION 'Account is inactive';
+    END IF;
+
+    IF v_account.user_type <> 'guest' AND NOT v_account.is_verified THEN
+        RAISE EXCEPTION 'Please verify your email address';
+    END IF;
+
+    IF v_account.user_type = 'guest' THEN
+        SELECT * INTO v_guest
+        FROM app_auth.guest_users
+        WHERE account_id = v_account_id;
+
+        IF v_account.temporary_expires_at IS NULL
+            OR v_account.temporary_expires_at < CURRENT_TIMESTAMP
+            OR v_guest.expires_at < CURRENT_TIMESTAMP THEN
+            RAISE EXCEPTION 'Guest access has expired';
+        END IF;
+
+        v_session_ttl := INTERVAL '6 hours';
+        v_refresh_ttl := INTERVAL '12 hours';
     END IF;
 
     -- Revoke old refresh token
@@ -279,31 +719,63 @@ BEGIN
 
     -- Create new session
     INSERT INTO app_auth.sessions (
-        user_id,
+        account_id,
+        user_type,
         token_hash,
         expires_at
     ) VALUES (
-        v_user_id,
+        v_account_id,
+        v_user_type,
         encode(public.digest(v_new_token, 'sha256'), 'hex'),
-        CURRENT_TIMESTAMP + INTERVAL '24 hours'
+        CURRENT_TIMESTAMP + v_session_ttl
     );
 
     -- Create new refresh token
     INSERT INTO app_auth.refresh_tokens (
-        user_id,
+        account_id,
+        user_type,
         token_hash,
         expires_at
     ) VALUES (
-        v_user_id,
+        v_account_id,
+        v_user_type,
         encode(public.digest(v_new_refresh_token, 'sha256'), 'hex'),
-        CURRENT_TIMESTAMP + INTERVAL '7 days'
+        CURRENT_TIMESTAMP + v_refresh_ttl
     );
+
+    -- Update login timestamp
+    UPDATE app_auth.user_accounts
+    SET last_login = CURRENT_TIMESTAMP
+    WHERE id = v_account_id;
+
+    -- Log activity for admins
+    IF v_user_type = 'admin' THEN
+        SELECT id INTO v_admin_user_id
+        FROM app_auth.admin_users
+        WHERE account_id = v_account_id;
+
+        IF v_admin_user_id IS NOT NULL THEN
+            INSERT INTO system.activity_logs (
+                user_id,
+                action,
+                entity_type,
+                entity_id,
+                details
+            ) VALUES (
+                v_admin_user_id,
+                'token_refreshed',
+                'session',
+                NULL,
+                jsonb_build_object('method', 'refresh_token')
+            );
+        END IF;
+    END IF;
 
     RETURN json_build_object(
         'success', true,
         'session_token', v_new_token,
         'refresh_token', v_new_refresh_token,
-        'expires_at', (CURRENT_TIMESTAMP + INTERVAL '24 hours')
+        'expires_at', (CURRENT_TIMESTAMP + v_session_ttl)
     );
 END;
 $$;
@@ -374,7 +846,7 @@ BEGIN
     INTO v_result
     FROM content.pages p
     LEFT JOIN content.categories c ON p.category_id = c.id
-    LEFT JOIN app_auth.users u ON p.author_id = u.id
+    LEFT JOIN app_auth.admin_users u ON p.author_id = u.id
     WHERE p.status = 'published'
         AND p.published_at <= CURRENT_TIMESTAMP
         AND (p_category_id IS NULL OR p.category_id = p_category_id)
@@ -536,8 +1008,8 @@ CREATE OR REPLACE FUNCTION api.submit_contact_form(
     p_form_id UUID,
     p_name TEXT,
     p_email TEXT,
-    p_subject TEXT DEFAULT NULL,
     p_message TEXT,
+    p_subject TEXT DEFAULT NULL,
     p_data JSONB DEFAULT '{}'::jsonb
 )
 RETURNS JSON
@@ -880,19 +1352,21 @@ BEGIN
             SELECT COALESCE(json_agg(
                 json_build_object(
                     'type', 'user',
-                    'id', id,
-                    'username', username,
-                    'first_name', first_name,
-                    'last_name', last_name
+                    'id', au.id,
+                    'username', au.username,
+                    'first_name', au.first_name,
+                    'last_name', au.last_name,
+                    'email', ua.email
                 )
             ), '[]'::json)
-            FROM app_auth.users
-            WHERE is_active = true AND is_verified = true
+            FROM app_auth.admin_users au
+            JOIN app_auth.user_accounts ua ON ua.id = au.account_id
+            WHERE ua.is_active = true AND ua.is_verified = true
                 AND (
-                    username ILIKE '%' || p_query || '%'
-                    OR first_name ILIKE '%' || p_query || '%'
-                    OR last_name ILIKE '%' || p_query || '%'
-                    OR email ILIKE '%' || p_query || '%'
+                    au.username ILIKE '%' || p_query || '%'
+                    OR au.first_name ILIKE '%' || p_query || '%'
+                    OR au.last_name ILIKE '%' || p_query || '%'
+                    OR ua.email ILIKE '%' || p_query || '%'
                 )
             LIMIT p_limit
         )
@@ -915,10 +1389,10 @@ DECLARE
 BEGIN
     SELECT json_build_object(
         'users', json_build_object(
-            'total', (SELECT COUNT(*) FROM app_auth.users),
-            'active', (SELECT COUNT(*) FROM app_auth.users WHERE is_active = true),
-            'verified', (SELECT COUNT(*) FROM app_auth.users WHERE is_verified = true),
-            'new_today', (SELECT COUNT(*) FROM app_auth.users WHERE created_at >= CURRENT_DATE)
+            'total', (SELECT COUNT(*) FROM app_auth.user_accounts),
+            'active', (SELECT COUNT(*) FROM app_auth.user_accounts WHERE is_active = true),
+            'verified', (SELECT COUNT(*) FROM app_auth.user_accounts WHERE is_verified = true),
+            'new_today', (SELECT COUNT(*) FROM app_auth.user_accounts WHERE created_at >= CURRENT_DATE)
         ),
         'content', json_build_object(
             'total_pages', (SELECT COUNT(*) FROM content.pages),
@@ -957,7 +1431,10 @@ $$;
 -- ============================================================================
 
 -- Public functions (accessible by anonymous users)
-GRANT EXECUTE ON FUNCTION api.register_user TO anon;
+GRANT EXECUTE ON FUNCTION api.register_user TO authenticated;
+GRANT EXECUTE ON FUNCTION api.register_user TO service_role;
+GRANT EXECUTE ON FUNCTION api.player_signup TO anon;
+GRANT EXECUTE ON FUNCTION api.guest_check_in TO anon;
 GRANT EXECUTE ON FUNCTION api.login TO anon;
 GRANT EXECUTE ON FUNCTION api.get_published_content TO anon;
 GRANT EXECUTE ON FUNCTION api.submit_contact_form TO anon;
@@ -968,6 +1445,7 @@ GRANT EXECUTE ON FUNCTION api.global_search TO anon;
 -- Authenticated functions
 GRANT EXECUTE ON FUNCTION api.logout TO authenticated;
 GRANT EXECUTE ON FUNCTION api.refresh_token TO authenticated;
+GRANT EXECUTE ON FUNCTION api.refresh_token TO service_role;
 GRANT EXECUTE ON FUNCTION api.upsert_content TO authenticated;
 
 -- Admin functions

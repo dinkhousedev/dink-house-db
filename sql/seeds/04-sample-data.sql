@@ -73,7 +73,7 @@ SELECT
     'in_progress',
     'medium',
     u.id
-FROM contact.contact_forms f, auth.users u
+FROM contact.contact_forms f, app_auth.admin_users u
 WHERE f.slug = 'general-contact' AND u.username = 'john.doe';
 
 INSERT INTO contact.contact_inquiries (form_id, first_name, last_name, email, subject, message, source, status, priority)
@@ -99,7 +99,7 @@ SELECT
     CURRENT_TIMESTAMP + INTERVAL '30 days',
     'scheduled',
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 INSERT INTO launch.launch_campaigns (name, slug, description, campaign_type, launch_date, status, created_by)
 SELECT
@@ -110,7 +110,7 @@ SELECT
     CURRENT_TIMESTAMP + INTERVAL '60 days',
     'draft',
     id
-FROM auth.users WHERE username = 'editor';
+FROM app_auth.admin_users WHERE username = 'editor';
 
 INSERT INTO launch.launch_campaigns (name, slug, description, campaign_type, status, created_by)
 SELECT
@@ -120,7 +120,7 @@ SELECT
     'newsletter',
     'completed',
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 -- Insert launch subscribers
 INSERT INTO launch.launch_subscribers (email, first_name, last_name, company, interests, source, is_active, verified_at)
@@ -164,10 +164,10 @@ INSERT INTO system.activity_logs (user_id, action, entity_type, entity_id, detai
 SELECT
     id,
     'login',
-    'auth.users',
+    'app_auth.admin_users',
     id,
     '{"ip": "192.168.1.100", "browser": "Chrome 120.0"}'::jsonb
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 INSERT INTO system.activity_logs (user_id, action, entity_type, entity_id, details)
 SELECT
@@ -176,7 +176,7 @@ SELECT
     'content.pages',
     p.id,
     '{"title": "Welcome to Dink House"}'::jsonb
-FROM auth.users u, content.pages p
+FROM app_auth.admin_users u, content.pages p
 WHERE u.username = 'admin' AND p.slug = 'welcome';
 
 -- Insert sample system jobs
@@ -184,13 +184,13 @@ INSERT INTO system.system_jobs (job_type, job_name, payload, status, priority, s
 SELECT
     'email_campaign',
     'Send Product Launch Emails',
-    '{"campaign_id": "' || c.id || '", "batch_size": 100}'::jsonb,
+    jsonb_build_object('campaign_id', c.id, 'batch_size', 100),
     'completed',
     8,
     CURRENT_TIMESTAMP - INTERVAL '1 day',
     CURRENT_TIMESTAMP - INTERVAL '1 day' + INTERVAL '30 minutes',
     u.id
-FROM launch.launch_campaigns c, auth.users u
+FROM launch.launch_campaigns c, app_auth.admin_users u
 WHERE c.slug = 'newsletter-january' AND u.username = 'admin';
 
 INSERT INTO system.system_jobs (job_type, job_name, payload, status, priority, scheduled_at, created_by)
@@ -202,7 +202,7 @@ SELECT
     3,
     CURRENT_TIMESTAMP + INTERVAL '1 hour',
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 -- Calculate engagement scores for subscribers
 UPDATE launch.launch_subscribers

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS system.system_settings (
     is_public BOOLEAN DEFAULT false,
     is_encrypted BOOLEAN DEFAULT false,
     validation_rules JSONB,
-    updated_by UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    updated_by UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS system.system_settings (
 -- Activity logs
 CREATE TABLE IF NOT EXISTS system.activity_logs (
     id UUID PRIMARY KEY DEFAULT public.uuid_generate_v4(),
-    user_id UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     action VARCHAR(100) NOT NULL,
     entity_type VARCHAR(100) NOT NULL,
     entity_id UUID,
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS system.system_jobs (
     failed_at TIMESTAMP WITH TIME ZONE,
     error_message TEXT,
     result JSONB,
-    created_by UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    created_by UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS system.audit_trail (
     table_name VARCHAR(100) NOT NULL,
     record_id UUID NOT NULL,
     operation VARCHAR(20) NOT NULL CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
-    user_id UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     old_data JSONB,
     new_data JSONB,
     changed_fields TEXT[],
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS system.feature_flags (
     allowed_users UUID[],
     blocked_users UUID[],
     metadata JSONB DEFAULT '{}',
-    created_by UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    created_by UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

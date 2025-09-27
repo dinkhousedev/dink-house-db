@@ -580,6 +580,10 @@ DECLARE
     v_max_capacity INTEGER;
     v_waitlist_capacity INTEGER;
     v_result JSON;
+    v_player_id UUID;
+    v_player_first_name TEXT;
+    v_player_last_name TEXT;
+    v_player_email TEXT;
 BEGIN
     -- Get event details
     SELECT current_registrations, max_capacity, waitlist_capacity
@@ -594,11 +598,23 @@ BEGIN
         RAISE EXCEPTION 'Event not found or registration closed';
     END IF;
 
+    -- Resolve authenticated player profile if available
+    IF auth.uid() IS NOT NULL THEN
+        SELECT p.id, p.first_name, p.last_name, ua.email
+        INTO v_player_id, v_player_first_name, v_player_last_name, v_player_email
+        FROM app_auth.players p
+        JOIN app_auth.user_accounts ua ON ua.id = p.account_id
+        WHERE p.account_id = auth.uid();
+    END IF;
+
     -- Check if already registered
     IF EXISTS (
         SELECT 1 FROM events.event_registrations
         WHERE event_id = p_event_id
-        AND (user_id = auth.uid() OR player_email = p_player_email)
+        AND (
+            (v_player_id IS NOT NULL AND user_id = v_player_id)
+            OR (p_player_email IS NOT NULL AND player_email = p_player_email)
+        )
         AND status IN ('registered', 'waitlisted')
     ) THEN
         RAISE EXCEPTION 'Already registered for this event';
@@ -625,9 +641,12 @@ BEGIN
         notes
     ) VALUES (
         p_event_id,
-        auth.uid(),
-        COALESCE(p_player_name, (SELECT raw_user_meta_data->>'full_name' FROM app_auth.users WHERE id = auth.uid())),
-        COALESCE(p_player_email, (SELECT email FROM app_auth.users WHERE id = auth.uid())),
+        v_player_id,
+        COALESCE(
+            p_player_name,
+            NULLIF(CONCAT_WS(' ', v_player_first_name, v_player_last_name), '')
+        ),
+        COALESCE(p_player_email, v_player_email),
         p_player_phone,
         p_skill_level,
         v_status,

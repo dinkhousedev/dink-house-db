@@ -104,7 +104,7 @@ CREATE TABLE events.event_templates (
     equipment_provided BOOLEAN DEFAULT false,
     settings JSONB DEFAULT '{}'::jsonb,
     is_active BOOLEAN DEFAULT true,
-    created_by UUID REFERENCES app_auth.users(id),
+    created_by UUID REFERENCES app_auth.admin_users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -156,8 +156,8 @@ CREATE TABLE events.events (
     settings JSONB DEFAULT '{}'::jsonb,
 
     -- Tracking
-    created_by UUID REFERENCES app_auth.users(id),
-    updated_by UUID REFERENCES app_auth.users(id),
+    created_by UUID REFERENCES app_auth.admin_users(id),
+    updated_by UUID REFERENCES app_auth.admin_users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
@@ -241,7 +241,7 @@ CREATE TABLE events.event_series (
     series_name VARCHAR(200) NOT NULL,
     parent_event_id UUID REFERENCES events.events(id) ON DELETE SET NULL,
     recurrence_pattern_id UUID REFERENCES events.recurrence_patterns(id) ON DELETE CASCADE,
-    created_by UUID REFERENCES app_auth.users(id),
+    created_by UUID REFERENCES app_auth.admin_users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -295,7 +295,7 @@ CREATE INDEX idx_exceptions_date ON events.event_exceptions(exception_date);
 CREATE TABLE events.event_registrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_id UUID NOT NULL REFERENCES events.events(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    user_id UUID REFERENCES app_auth.players(id) ON DELETE SET NULL,
 
     -- Player info (for guests)
     player_name VARCHAR(200),
@@ -348,7 +348,7 @@ CREATE TABLE events.court_availability (
     end_time TIME NOT NULL,
     is_available BOOLEAN DEFAULT true,
     reason VARCHAR(200),
-    created_by UUID REFERENCES app_auth.users(id),
+    created_by UUID REFERENCES app_auth.admin_users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT valid_availability_time CHECK (end_time > start_time),

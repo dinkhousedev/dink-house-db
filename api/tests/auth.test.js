@@ -2,93 +2,74 @@
  * Authentication API Tests
  */
 
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const config = require('../config/supabase.config');
 
 // Initialize Supabase client
 const supabase = createClient(
   config.supabase.url,
-  config.supabase.anonKey
+  config.supabase.serviceKey
 );
 
 describe('Authentication API', () => {
-  let testUser = {
-    email: 'test' + Date.now() + '@example.com',
-    username: 'testuser' + Date.now(),
+  const playerUser = {
+    email: 'player' + Date.now() + '@example.com',
     password: 'TestPassword123!',
     first_name: 'Test',
-    last_name: 'User',
+    last_name: 'Player',
   };
 
   let sessionToken;
   let refreshToken;
-  let userId;
+  let accountId;
 
-  describe('POST /rpc/register_user', () => {
-    test('should register a new user', async () => {
-      const { data, error } = await supabase.rpc('register_user', testUser);
+  describe('POST /rpc/player_signup', () => {
+    test('should register a new player', async () => {
+      const { data, error } = await supabase.rpc('player_signup', playerUser);
 
       expect(error).toBeNull();
       expect(data.success).toBe(true);
       expect(data.user_id).toBeDefined();
-      expect(data.verification_token).toBeDefined();
-      expect(data.message).toContain('successful');
+      expect(data.user_type).toBe('player');
+      expect(data.message).toContain('Registration successful');
 
-      userId = data.user_id;
+      accountId = data.user_id;
     });
 
     test('should reject duplicate email', async () => {
-      const { data, error } = await supabase.rpc('register_user', testUser);
+      const { data, error } = await supabase.rpc('player_signup', playerUser);
 
       expect(error).toBeDefined();
       expect(error.message).toContain('already registered');
     });
 
-    test('should reject duplicate username', async () => {
-      const duplicateUser = {
-        ...testUser,
-        email: 'different' + Date.now() + '@example.com',
-      };
-
-      const { data, error } = await supabase.rpc('register_user', duplicateUser);
-
-      expect(error).toBeDefined();
-      expect(error.message).toContain('already taken');
-    });
-
     test('should validate email format', async () => {
       const invalidUser = {
-        ...testUser,
+        ...playerUser,
         email: 'invalid-email',
-        username: 'unique' + Date.now(),
       };
 
-      const { data, error } = await supabase.rpc('register_user', invalidUser);
+      const { data, error } = await supabase.rpc('player_signup', invalidUser);
 
       expect(error).toBeDefined();
+      expect(error.message).toContain('Invalid email');
     });
   });
 
   describe('POST /rpc/login', () => {
-    beforeAll(async () => {
-      // First verify the test user
-      // In real scenario, this would be done via email verification
-      await supabase
-        .from('users')
-        .update({ is_verified: true })
-        .eq('id', userId);
-    });
-
     test('should login with valid credentials', async () => {
       const { data, error } = await supabase.rpc('login', {
-        email: testUser.email,
-        password: testUser.password,
+        email: playerUser.email,
+        password: playerUser.password,
       });
 
       expect(error).toBeNull();
       expect(data.success).toBe(true);
       expect(data.user).toBeDefined();
-      expect(data.user.email).toBe(testUser.email);
+      expect(data.user.email).toBe(playerUser.email);
+      expect(data.user.account_id).toBe(accountId);
+      expect(data.user.user_type).toBe('player');
       expect(data.session_token).toBeDefined();
       expect(data.refresh_token).toBeDefined();
 
@@ -98,7 +79,7 @@ describe('Authentication API', () => {
 
     test('should reject invalid password', async () => {
       const { data, error } = await supabase.rpc('login', {
-        email: testUser.email,
+        email: playerUser.email,
         password: 'WrongPassword123!',
       });
 
@@ -117,18 +98,26 @@ describe('Authentication API', () => {
     });
 
     test('should lock account after multiple failed attempts', async () => {
-      // Make 5 failed login attempts
+      const tempUser = {
+        email: global.testUtils.generateRandomEmail(),
+        password: 'TempPassword123!',
+        first_name: 'Temp',
+        last_name: 'User',
+      };
+
+      const { data: signup } = await supabase.rpc('player_signup', tempUser);
+      expect(signup.success).toBe(true);
+
       for (let i = 0; i < 5; i++) {
         await supabase.rpc('login', {
-          email: testUser.email,
+          email: tempUser.email,
           password: 'WrongPassword',
         });
       }
 
-      // Next attempt should show account locked
-      const { data, error } = await supabase.rpc('login', {
-        email: testUser.email,
-        password: testUser.password,
+      const { error } = await supabase.rpc('login', {
+        email: tempUser.email,
+        password: tempUser.password,
       });
 
       expect(error).toBeDefined();
@@ -164,21 +153,47 @@ describe('Authentication API', () => {
 
     test('should reject expired refresh token', async () => {
       // Create an expired token in the database for testing
-      const expiredToken = 'expired-token-hash';
+      const expiredToken = 'expired-token';
+      const expiredTokenHash = crypto
+        .createHash('sha256')
+        .update(expiredToken)
+        .digest('hex');
+
       await supabase
-        .from('refresh_tokens')
+        .from('app_auth_refresh_tokens')
         .insert({
-          user_id: userId,
-          token_hash: expiredToken,
+          account_id: accountId,
+          user_type: 'player',
+          token_hash: expiredTokenHash,
           expires_at: new Date(Date.now() - 1000).toISOString(),
         });
 
       const { data, error } = await supabase.rpc('refresh_token', {
-        refresh_token: 'expired-token',
+        refresh_token: expiredToken,
       });
 
       expect(error).toBeDefined();
       expect(error.message).toContain('Invalid refresh token');
+    });
+  });
+
+  describe('POST /rpc/guest_check_in', () => {
+    test('should create a guest profile with session tokens', async () => {
+      const guestPayload = {
+        display_name: 'Walk-in Guest',
+        email: `guest.${Date.now()}@example.com`,
+        phone: '555-123-4567',
+      };
+
+      const { data, error } = await supabase.rpc('guest_check_in', guestPayload);
+
+      expect(error).toBeNull();
+      expect(data.success).toBe(true);
+      expect(data.user_type).toBe('guest');
+      expect(data.session_token).toBeDefined();
+      expect(data.refresh_token).toBeDefined();
+      expect(data.guest.display_name).toBe(guestPayload.display_name);
+      expect(data.guest.email).toBe(guestPayload.email.toLowerCase());
     });
   });
 
@@ -217,87 +232,20 @@ describe('Authentication API', () => {
       );
 
       const { data, error } = await authenticatedSupabase
-        .from('users')
+        .from('app_auth_user_accounts')
         .select('*')
         .single();
 
       expect(error).toBeDefined();
     });
   });
-
-  describe('User Profile Operations', () => {
-    let newSessionToken;
-
-    beforeAll(async () => {
-      // Login again to get new session
-      const { data } = await supabase.rpc('login', {
-        email: testUser.email,
-        password: testUser.password,
-      });
-      newSessionToken = data.session_token;
-    });
-
-    test('should get user profile', async () => {
-      const authenticatedSupabase = createClient(
-        config.supabase.url,
-        config.supabase.anonKey,
-        {
-          global: {
-            headers: {
-              Authorization: `Bearer ${newSessionToken}`,
-            },
-          },
-        }
-      );
-
-      const { data, error } = await authenticatedSupabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      expect(error).toBeNull();
-      expect(data.email).toBe(testUser.email);
-      expect(data.username).toBe(testUser.username);
-    });
-
-    test('should update user profile', async () => {
-      const authenticatedSupabase = createClient(
-        config.supabase.url,
-        config.supabase.anonKey,
-        {
-          global: {
-            headers: {
-              Authorization: `Bearer ${newSessionToken}`,
-            },
-          },
-        }
-      );
-
-      const { data, error } = await authenticatedSupabase
-        .from('users')
-        .update({
-          first_name: 'Updated',
-          last_name: 'Name',
-        })
-        .eq('id', userId)
-        .select()
-        .single();
-
-      expect(error).toBeNull();
-      expect(data.first_name).toBe('Updated');
-      expect(data.last_name).toBe('Name');
-    });
-  });
-
-  // Cleanup
+  
   afterAll(async () => {
-    // Clean up test user
-    if (userId) {
+    if (accountId) {
       await supabase
-        .from('users')
+        .from('app_auth_user_accounts')
         .delete()
-        .eq('id', userId);
+        .eq('id', accountId);
     }
   });
 });

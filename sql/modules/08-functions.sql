@@ -109,8 +109,24 @@ $$ LANGUAGE plpgsql;
 -- ============================================================================
 
 -- Updated_at triggers for all tables with updated_at column
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE ON app_auth.users
+CREATE TRIGGER update_user_accounts_updated_at
+    BEFORE UPDATE ON app_auth.user_accounts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_admin_users_updated_at
+    BEFORE UPDATE ON app_auth.admin_users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_players_updated_at
+    BEFORE UPDATE ON app_auth.players
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_guest_users_updated_at
+    BEFORE UPDATE ON app_auth.guest_users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_api_keys_updated_at
+    BEFORE UPDATE ON app_auth.api_keys
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_categories_updated_at
@@ -158,7 +174,7 @@ CREATE TRIGGER update_flags_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Audit triggers (optional - enable for specific tables as needed)
--- Example: Enable audit for app_auth.users table
--- CREATE TRIGGER audit_users
---     AFTER INSERT OR UPDATE OR DELETE ON app_auth.users
+-- Example: Enable audit for app_auth.user_accounts table
+-- CREATE TRIGGER audit_user_accounts
+--     AFTER INSERT OR UPDATE OR DELETE ON app_auth.user_accounts
 --     FOR EACH ROW EXECUTE FUNCTION create_audit_log();

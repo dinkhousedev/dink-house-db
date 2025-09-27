@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS launch.launch_campaigns (
     target_audience JSONB DEFAULT '{}',
     goals JSONB DEFAULT '{}',
     metadata JSONB DEFAULT '{}',
-    created_by UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+    created_by UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS launch.notification_templates (
     text_content TEXT,
     variables JSONB DEFAULT '{}',
     is_active BOOLEAN DEFAULT true,
-    created_by UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+    created_by UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS launch.launch_segments (
     criteria JSONB NOT NULL,
     is_dynamic BOOLEAN DEFAULT true,
     subscriber_count INT DEFAULT 0,
-    created_by UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+    created_by UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

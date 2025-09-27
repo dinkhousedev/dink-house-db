@@ -14,11 +14,11 @@ CREATE TABLE IF NOT EXISTS app_auth.allowed_emails (
     last_name VARCHAR(100),
     role VARCHAR(50) DEFAULT 'viewer'
         CHECK (role IN ('super_admin', 'admin', 'editor', 'viewer', 'manager', 'coach')),
-    added_by UUID REFERENCES app_auth.users(id),
+    added_by UUID REFERENCES app_auth.admin_users(id),
     notes TEXT,
     is_active BOOLEAN DEFAULT true,
     used_at TIMESTAMP WITH TIME ZONE,
-    used_by UUID REFERENCES app_auth.users(id),
+    used_by UUID REFERENCES app_auth.admin_users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

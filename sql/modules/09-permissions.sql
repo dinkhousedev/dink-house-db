@@ -29,6 +29,8 @@ $$;
 -- Anonymous users (public access)
 GRANT USAGE ON SCHEMA public TO app_anon;
 GRANT USAGE ON SCHEMA api TO app_anon;
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT USAGE ON SCHEMA api TO anon;
 
 -- Authenticated users
 GRANT USAGE ON SCHEMA public TO app_user;
@@ -37,6 +39,12 @@ GRANT USAGE ON SCHEMA content TO app_user;
 GRANT USAGE ON SCHEMA contact TO app_user;
 GRANT USAGE ON SCHEMA launch TO app_user;
 GRANT USAGE ON SCHEMA api TO app_user;
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT USAGE ON SCHEMA auth TO authenticated;
+GRANT USAGE ON SCHEMA content TO authenticated;
+GRANT USAGE ON SCHEMA contact TO authenticated;
+GRANT USAGE ON SCHEMA launch TO authenticated;
+GRANT USAGE ON SCHEMA api TO authenticated;
 
 -- Admin users
 GRANT USAGE ON SCHEMA public TO app_admin;
@@ -46,6 +54,13 @@ GRANT USAGE ON SCHEMA contact TO app_admin;
 GRANT USAGE ON SCHEMA launch TO app_admin;
 GRANT USAGE ON SCHEMA system TO app_admin;
 GRANT USAGE ON SCHEMA api TO app_admin;
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT USAGE ON SCHEMA auth TO service_role;
+GRANT USAGE ON SCHEMA content TO service_role;
+GRANT USAGE ON SCHEMA contact TO service_role;
+GRANT USAGE ON SCHEMA launch TO service_role;
+GRANT USAGE ON SCHEMA system TO service_role;
+GRANT USAGE ON SCHEMA api TO service_role;
 
 -- Service accounts (full access)
 GRANT ALL ON SCHEMA public TO app_service;
@@ -109,6 +124,9 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA system TO app_admin, app_service;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO app_anon, app_user, app_admin, app_service;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO app_user, app_admin, app_service;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA api TO app_anon, app_user, app_admin, app_service;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated, service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO authenticated, service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA api TO anon, authenticated, service_role;
 
 -- ============================================================================
 -- DEFAULT PRIVILEGES
@@ -160,51 +178,23 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA system
     GRANT USAGE ON SEQUENCES TO app_admin, app_service;
 
 -- ============================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- Example policies for key tables
--- ============================================================================
-
--- Enable RLS on sensitive tables
-ALTER TABLE app_auth.users ENABLE ROW LEVEL SECURITY;
+-- ROW LEVEL SECURITY (RLS)
+-- Definitive policies are maintained in sql/modules/11-rls-policies.sql
+ALTER TABLE app_auth.user_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_auth.admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_auth.players ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_auth.guest_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_auth.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE content.pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contact.contact_inquiries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system.system_settings ENABLE ROW LEVEL SECURITY;
 
--- Auth users policies
-CREATE POLICY users_select_policy ON app_auth.users
-    FOR SELECT USING (true);  -- Everyone can see user profiles
-
-CREATE POLICY users_update_own ON app_auth.users
-    FOR UPDATE USING (id = current_setting('app.current_user_id', true)::uuid);
-
--- Content pages policies
-CREATE POLICY pages_select_public ON content.pages
-    FOR SELECT USING (status = 'published' AND visibility = 'public');
-
-CREATE POLICY pages_manage_own ON content.pages
-    FOR ALL USING (author_id = current_setting('app.current_user_id', true)::uuid);
-
--- Contact inquiries policies
-CREATE POLICY inquiries_insert_anon ON contact.contact_inquiries
-    FOR INSERT WITH CHECK (true);  -- Anyone can submit
-
-CREATE POLICY inquiries_view_own ON contact.contact_inquiries
-    FOR SELECT USING (
-        email = current_setting('app.current_user_email', true) OR
-        assigned_to = current_setting('app.current_user_id', true)::uuid
-    );
-
--- System settings policies
-CREATE POLICY settings_select_public ON system.system_settings
-    FOR SELECT USING (is_public = true);
-
 CREATE POLICY settings_admin_all ON system.system_settings
     FOR ALL USING (
         EXISTS (
-            SELECT 1 FROM app_auth.users
-            WHERE id = current_setting('app.current_user_id', true)::uuid
-            AND role IN ('admin', 'super_admin')
+            SELECT 1 FROM app_auth.admin_users au
+            WHERE au.id = current_setting('app.current_user_id', true)::uuid
+            AND au.role IN ('admin', 'super_admin')
         )
     );
 

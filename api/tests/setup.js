@@ -22,22 +22,15 @@ global.testUtils = {
   createTestUser: async (supabase, overrides = {}) => {
     const userData = {
       email: global.testUtils.generateRandomEmail(),
-      username: global.testUtils.generateRandomUsername(),
       password: 'TestPassword123!',
       first_name: 'Test',
       last_name: 'User',
       ...overrides,
     };
 
-    const { data, error } = await supabase.rpc('register_user', userData);
+    const { data, error } = await supabase.rpc('player_signup', userData);
 
     if (error) throw error;
-
-    // Auto-verify for testing
-    await supabase
-      .from('users')
-      .update({ is_verified: true })
-      .eq('id', data.user_id);
 
     return { ...userData, id: data.user_id };
   },
@@ -45,7 +38,7 @@ global.testUtils = {
   cleanupTestUser: async (supabase, userId) => {
     if (userId) {
       await supabase
-        .from('users')
+        .from('app_auth_user_accounts')
         .delete()
         .eq('id', userId);
     }
@@ -91,7 +84,7 @@ beforeAll(async () => {
   // Check database connection
   try {
     const { error } = await supabase
-      .from('users')
+      .from('app_auth_user_accounts')
       .select('count')
       .limit(1);
 

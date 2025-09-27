@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS contact.contact_inquiries (
     priority VARCHAR(20) DEFAULT 'medium'
         CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
     tags TEXT[],
-    assigned_to UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    assigned_to UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     responded_at TIMESTAMP WITH TIME ZONE,
     resolved_at TIMESTAMP WITH TIME ZONE,
     ip_address INET,
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS contact.contact_inquiries (
 CREATE TABLE IF NOT EXISTS contact.contact_responses (
     id UUID PRIMARY KEY DEFAULT public.uuid_generate_v4(),
     inquiry_id UUID NOT NULL REFERENCES contact.contact_inquiries(id) ON DELETE CASCADE,
-    responder_id UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+    responder_id UUID NOT NULL REFERENCES app_auth.admin_users(id) ON DELETE RESTRICT,
     response_type VARCHAR(50) DEFAULT 'email'
         CHECK (response_type IN ('email', 'phone', 'internal_note')),
     subject VARCHAR(255),
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS contact.contact_blacklist (
     ip_address INET,
     reason TEXT,
     expires_at TIMESTAMP WITH TIME ZONE,
-    created_by UUID REFERENCES app_auth.users(id) ON DELETE SET NULL,
+    created_by UUID REFERENCES app_auth.admin_users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

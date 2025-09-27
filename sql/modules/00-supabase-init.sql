@@ -80,8 +80,14 @@ CREATE INDEX IF NOT EXISTS idx_objects_last_accessed_at ON storage.objects(last_
 CREATE SCHEMA IF NOT EXISTS realtime;
 GRANT USAGE ON SCHEMA realtime TO postgres;
 
--- Create publication for realtime
-CREATE PUBLICATION supabase_realtime FOR ALL TABLES;
+-- Create publication for realtime (if not exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        CREATE PUBLICATION supabase_realtime FOR ALL TABLES;
+    END IF;
+END
+$$;
 
 -- ============================================================================
 -- EXTENSIONS SCHEMA

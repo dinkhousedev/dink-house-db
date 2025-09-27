@@ -157,7 +157,7 @@ services:
 
   # Realtime - WebSocket service
   realtime:
-    image: supabase/realtime:v2.25.35
+    image: supabase/realtime:v2.30.34
     container_name: dink-house-realtime
     depends_on:
       postgres:
@@ -178,7 +178,8 @@ services:
       SLOT_NAME: supabase_realtime_rls
       TEMPORARY_SLOT: "true"
       SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
-      APP_NAME: ${REALTIME_APP_NAME:-dink-house-realtime}
+      RLIMIT_NOFILE: 100000
+      APP_NAME: realtime
     ports:
       - "${REALTIME_PORT:-9004}:4000"
     networks:

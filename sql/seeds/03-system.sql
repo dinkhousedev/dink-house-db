@@ -78,7 +78,7 @@ SELECT
     'Welcome, {{first_name}}! Thank you for subscribing to our launch notifications. We''ll keep you updated on our latest developments. Best regards, The {{site_name}} Team',
     true,
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 INSERT INTO launch.notification_templates (name, slug, template_type, category, subject, html_content, text_content, is_active, created_by)
 SELECT
@@ -91,7 +91,7 @@ SELECT
     'We''re Live! Hi {{first_name}}, {{campaign_description}} Check it out at: {{launch_url}}',
     true,
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 INSERT INTO launch.notification_templates (name, slug, template_type, category, subject, html_content, text_content, is_active, created_by)
 SELECT
@@ -104,7 +104,7 @@ SELECT
     'Thank you for contacting us. Hi {{first_name}}, We''ve received your inquiry and will respond within 24-48 hours. Your reference number is: {{inquiry_id}}',
     true,
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 -- Insert feature flags
 INSERT INTO system.feature_flags (flag_key, name, description, is_enabled, rollout_percentage, created_by)
@@ -115,7 +115,7 @@ SELECT
     false,
     0,
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
 
 INSERT INTO system.feature_flags (flag_key, name, description, is_enabled, rollout_percentage, created_by)
 SELECT
@@ -125,4 +125,4 @@ SELECT
     false,
     0,
     id
-FROM auth.users WHERE username = 'admin';
+FROM app_auth.admin_users WHERE username = 'admin';
