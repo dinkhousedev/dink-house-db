@@ -76,15 +76,27 @@ PGPASSWORD=${DB_PASSWORD:-postgres} psql \
     -d $DB_NAME \
     --quiet <<EOF
 -- Insert sample courts
-INSERT INTO events.courts (court_number, name, surface_type, status, location, max_capacity)
+INSERT INTO events.courts (court_number, name, surface_type, environment, status, location, max_capacity)
 VALUES
-    (1, 'Court 1 - Championship', 'hard', 'available', 'Main Arena', 4),
-    (2, 'Court 2 - Tournament', 'hard', 'available', 'Main Arena', 4),
-    (3, 'Court 3 - Practice', 'hard', 'available', 'North Wing', 4),
-    (4, 'Court 4 - Practice', 'hard', 'available', 'North Wing', 4),
-    (5, 'Court 5 - Indoor', 'indoor', 'available', 'Indoor Complex', 4),
-    (6, 'Court 6 - Indoor', 'indoor', 'available', 'Indoor Complex', 4)
-ON CONFLICT (court_number) DO NOTHING;
+    (1, 'Court 1 Indoor', 'hard', 'indoor', 'available', 'Indoor Pavilion', 4),
+    (2, 'Court 2 Indoor', 'hard', 'indoor', 'available', 'Indoor Pavilion', 4),
+    (3, 'Court 3 Indoor', 'hard', 'indoor', 'available', 'Indoor Pavilion', 4),
+    (4, 'Court 4 Indoor', 'hard', 'indoor', 'available', 'Indoor Pavilion', 4),
+    (5, 'Court 5 Indoor', 'hard', 'indoor', 'available', 'Indoor Pavilion', 4),
+    (6, 'Court 6 Outdoor', 'hard', 'outdoor', 'available', 'Championship Plaza', 4),
+    (7, 'Court 7 Outdoor', 'hard', 'outdoor', 'available', 'Championship Plaza', 4),
+    (8, 'Court 8 Outdoor', 'hard', 'outdoor', 'available', 'Championship Plaza', 4),
+    (9, 'Court 9 Outdoor', 'hard', 'outdoor', 'available', 'Championship Plaza', 4),
+    (10, 'Court 10 Outdoor', 'hard', 'outdoor', 'available', 'Championship Plaza', 4)
+ON CONFLICT (court_number) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    surface_type = EXCLUDED.surface_type,
+    environment = EXCLUDED.environment,
+    status = EXCLUDED.status,
+    location = EXCLUDED.location,
+    max_capacity = EXCLUDED.max_capacity,
+    updated_at = CURRENT_TIMESTAMP;
 
 -- Insert sample event templates
 INSERT INTO events.event_templates (
@@ -97,55 +109,90 @@ INSERT INTO events.event_templates (
     skill_levels,
     price_member,
     price_guest,
+    court_preferences,
+    dupr_range_label,
+    dupr_min_rating,
+    dupr_max_rating,
+    dupr_open_ended,
+    dupr_min_inclusive,
+    dupr_max_inclusive,
     equipment_provided
 )
 VALUES
     (
         'Tuesday Night Scramble',
         'Popular weekly scramble format with mixed skill levels',
-        'scramble',
+        'event_scramble',
         120,
         16,
         8,
         ARRAY['2.5', '3.0', '3.5', '4.0']::events.skill_level[],
         15.00,
         20.00,
+        '{"count": 2}'::jsonb,
+        NULL,
+        NULL,
+        NULL,
+        false,
+        true,
+        true,
         true
     ),
     (
         'DUPR Friday Night',
         'Official DUPR-rated matches',
-        'dupr',
+        'dupr_open_play',
         180,
         12,
         4,
         ARRAY['3.0', '3.5', '4.0', '4.5', '5.0']::events.skill_level[],
         20.00,
         25.00,
+        '{"count": 4}'::jsonb,
+        '3.0 - 3.5',
+        3.0,
+        3.5,
+        false,
+        true,
+        true,
         false
     ),
     (
         'Beginner Open Play',
         'Relaxed open play for beginners',
-        'open_play',
+        'event_scramble',
         120,
         20,
         4,
         ARRAY['2.0', '2.5', '3.0']::events.skill_level[],
         10.00,
         15.00,
+        '{"count": 4}'::jsonb,
+        NULL,
+        NULL,
+        NULL,
+        false,
+        true,
+        true,
         true
     ),
     (
         'Weekend Tournament',
         'Competitive weekend tournament',
-        'tournament',
+        'non_dupr_tournament',
         480,
         32,
         16,
-        ARRAY['3.5', '4.0', '4.5', '5.0', '5.0+']::events.skill_level[],
+        ARRAY['3.5', '4.0', '4.5', '5.0']::events.skill_level[],
         50.00,
         60.00,
+        '{"count": 6}'::jsonb,
+        NULL,
+        NULL,
+        NULL,
+        false,
+        true,
+        true,
         false
     )
 ON CONFLICT DO NOTHING;

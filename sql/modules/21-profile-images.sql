@@ -19,10 +19,10 @@ ALTER TABLE app_auth.players
 ADD COLUMN IF NOT EXISTS avatar_url TEXT,
 ADD COLUMN IF NOT EXISTS avatar_thumbnail_url TEXT;
 
--- Guest avatars (if needed)
-ALTER TABLE app_auth.guests
-ADD COLUMN IF NOT EXISTS avatar_url TEXT,
-ADD COLUMN IF NOT EXISTS avatar_thumbnail_url TEXT;
+-- Guest avatars (commented out - guests table doesn't exist)
+-- ALTER TABLE app_auth.guests
+-- ADD COLUMN IF NOT EXISTS avatar_url TEXT,
+-- ADD COLUMN IF NOT EXISTS avatar_thumbnail_url TEXT;
 
 -- --------------------------------------------------------------------------
 -- Image metadata table for tracking uploads
@@ -209,39 +209,10 @@ BEGIN
         );
 
     ELSIF v_account.user_type = 'guest' THEN
-        SELECT
-            g.id,
-            g.first_name,
-            g.last_name,
-            g.phone,
-            g.avatar_url,
-            g.avatar_thumbnail_url
-        INTO v_guest
-        FROM app_auth.guests g
-        WHERE g.account_id = v_account.id;
-
-        IF v_guest.id IS NULL THEN
-            RETURN json_build_object(
-                'success', false,
-                'error', 'Guest profile not found'
-            );
-        END IF;
-
-        v_user_info := jsonb_build_object(
-            'id', v_guest.id,
-            'account_id', v_account.id,
-            'email', v_account.email,
-            'first_name', v_guest.first_name,
-            'last_name', v_guest.last_name,
-            'phone', v_guest.phone,
-            'avatar_url', v_guest.avatar_url,
-            'avatar_thumbnail_url', v_guest.avatar_thumbnail_url,
-            'position', 'guest',
-            'role', 'guest',
-            'user_type', 'guest',
-            'is_verified', v_account.is_verified,
-            'last_login', v_account.last_login,
-            'created_at', v_account.created_at
+        -- Guest profile handling (guests table doesn't exist yet)
+        RETURN json_build_object(
+            'success', false,
+            'error', 'Guest profiles are not implemented'
         );
     END IF;
 
@@ -338,13 +309,11 @@ BEGIN
         v_updated := FOUND;
 
     ELSIF v_account.user_type = 'guest' THEN
-        UPDATE app_auth.guests
-        SET
-            avatar_url = p_avatar_url,
-            avatar_thumbnail_url = COALESCE(p_thumbnail_url, avatar_thumbnail_url),
-            updated_at = CURRENT_TIMESTAMP
-        WHERE account_id = v_account.id;
-        v_updated := FOUND;
+        -- Guest avatar updates not implemented (guests table doesn't exist)
+        RETURN json_build_object(
+            'success', false,
+            'error', 'Guest avatar updates are not implemented'
+        );
     END IF;
 
     IF v_updated THEN
@@ -395,6 +364,6 @@ $$;
 -- --------------------------------------------------------------------------
 -- Grant necessary permissions
 -- --------------------------------------------------------------------------
-GRANT SELECT ON app_auth.user_images TO api_user;
-GRANT INSERT, UPDATE ON app_auth.user_images TO api_user;
-GRANT EXECUTE ON FUNCTION api.update_user_avatar TO api_user;
+GRANT SELECT ON app_auth.user_images TO postgres;
+GRANT INSERT, UPDATE ON app_auth.user_images TO postgres;
+GRANT EXECUTE ON FUNCTION api.update_user_avatar TO postgres;

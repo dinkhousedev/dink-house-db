@@ -23,7 +23,14 @@ CREATE OR REPLACE FUNCTION api.create_event_with_courts(
     p_price_guest DECIMAL DEFAULT 0,
     p_member_only BOOLEAN DEFAULT false,
     p_equipment_provided BOOLEAN DEFAULT false,
-    p_special_instructions TEXT DEFAULT NULL
+    p_special_instructions TEXT DEFAULT NULL,
+    p_dupr_bracket_id UUID DEFAULT NULL,
+    p_dupr_range_label VARCHAR DEFAULT NULL,
+    p_dupr_min_rating NUMERIC DEFAULT NULL,
+    p_dupr_max_rating NUMERIC DEFAULT NULL,
+    p_dupr_open_ended BOOLEAN DEFAULT false,
+    p_dupr_min_inclusive BOOLEAN DEFAULT true,
+    p_dupr_max_inclusive BOOLEAN DEFAULT true
 )
 RETURNS JSON
 LANGUAGE plpgsql
@@ -33,10 +40,68 @@ DECLARE
     v_event_id UUID;
     v_court_id UUID;
     v_result JSON;
+    v_dupr_bracket events.dupr_brackets%ROWTYPE;
+    v_dupr_bracket_id UUID := p_dupr_bracket_id;
+    v_dupr_range_label VARCHAR := p_dupr_range_label;
+    v_dupr_min_rating NUMERIC(3, 2) := p_dupr_min_rating;
+    v_dupr_max_rating NUMERIC(3, 2) := p_dupr_max_rating;
+    v_dupr_open_ended BOOLEAN := p_dupr_open_ended;
+    v_dupr_min_inclusive BOOLEAN := p_dupr_min_inclusive;
+    v_dupr_max_inclusive BOOLEAN := p_dupr_max_inclusive;
 BEGIN
     -- Check if user is staff
     IF NOT events.is_staff() THEN
         RAISE EXCEPTION 'Unauthorized: Only staff can create events';
+    END IF;
+
+    -- Validate DUPR configuration for DUPR-centric events
+    IF p_event_type IN ('dupr_open_play', 'dupr_tournament') THEN
+        IF v_dupr_bracket_id IS NOT NULL THEN
+            SELECT *
+            INTO v_dupr_bracket
+            FROM events.dupr_brackets
+            WHERE id = v_dupr_bracket_id;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Invalid DUPR bracket provided';
+            END IF;
+
+            v_dupr_range_label := COALESCE(v_dupr_range_label, v_dupr_bracket.label);
+            v_dupr_min_rating := COALESCE(v_dupr_bracket.min_rating, v_dupr_min_rating);
+            v_dupr_max_rating := COALESCE(v_dupr_bracket.max_rating, v_dupr_max_rating);
+            v_dupr_min_inclusive := v_dupr_bracket.min_inclusive;
+            v_dupr_max_inclusive := COALESCE(v_dupr_bracket.max_inclusive, true);
+            v_dupr_open_ended := v_dupr_bracket.max_rating IS NULL;
+        END IF;
+
+        IF v_dupr_open_ended THEN
+            v_dupr_max_rating := NULL;
+            v_dupr_max_inclusive := true;
+        END IF;
+
+        IF v_dupr_range_label IS NULL THEN
+            RAISE EXCEPTION 'DUPR range label is required for DUPR events';
+        END IF;
+
+        IF v_dupr_min_rating IS NULL THEN
+            RAISE EXCEPTION 'Minimum DUPR rating is required for DUPR events';
+        END IF;
+
+        IF NOT v_dupr_open_ended AND v_dupr_max_rating IS NULL THEN
+            RAISE EXCEPTION 'Maximum DUPR rating is required unless the range is open ended';
+        END IF;
+
+        IF v_dupr_max_rating IS NOT NULL AND v_dupr_max_rating < v_dupr_min_rating THEN
+            RAISE EXCEPTION 'DUPR maximum rating must be greater than or equal to minimum rating';
+        END IF;
+    ELSE
+        v_dupr_bracket_id := NULL;
+        v_dupr_range_label := NULL;
+        v_dupr_min_rating := NULL;
+        v_dupr_max_rating := NULL;
+        v_dupr_open_ended := false;
+        v_dupr_min_inclusive := true;
+        v_dupr_max_inclusive := true;
     END IF;
 
     -- Check for court conflicts
@@ -64,6 +129,13 @@ BEGIN
         max_capacity,
         min_capacity,
         skill_levels,
+        dupr_bracket_id,
+        dupr_range_label,
+        dupr_min_rating,
+        dupr_max_rating,
+        dupr_open_ended,
+        dupr_min_inclusive,
+        dupr_max_inclusive,
         price_member,
         price_guest,
         member_only,
@@ -80,6 +152,13 @@ BEGIN
         p_max_capacity,
         p_min_capacity,
         COALESCE(p_skill_levels, ARRAY['2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0']::events.skill_level[]),
+        v_dupr_bracket_id,
+        v_dupr_range_label,
+        v_dupr_min_rating,
+        v_dupr_max_rating,
+        v_dupr_open_ended,
+        v_dupr_min_inclusive,
+        v_dupr_max_inclusive,
         p_price_member,
         p_price_guest,
         p_member_only,
@@ -101,14 +180,28 @@ BEGIN
     SELECT json_build_object(
         'event_id', v_event_id,
         'title', p_title,
+        'event_type', p_event_type,
         'start_time', p_start_time,
         'end_time', p_end_time,
+        'dupr_bracket_id', v_dupr_bracket_id,
+        'dupr_range', CASE
+            WHEN p_event_type IN ('dupr_open_play', 'dupr_tournament') THEN json_build_object(
+                'label', v_dupr_range_label,
+                'min_rating', v_dupr_min_rating,
+                'max_rating', v_dupr_max_rating,
+                'min_inclusive', v_dupr_min_inclusive,
+                'max_inclusive', v_dupr_max_inclusive,
+                'open_ended', v_dupr_open_ended,
+                'source', CASE WHEN v_dupr_bracket_id IS NOT NULL THEN 'catalog' ELSE 'custom' END
+            )
+            ELSE NULL
+        END,
         'courts', (
             SELECT json_agg(json_build_object(
                 'court_id', ec.court_id,
                 'court_number', c.court_number,
                 'court_name', c.name
-            ))
+            ) ORDER BY c.court_number)
             FROM events.event_courts ec
             JOIN events.courts c ON ec.court_id = c.id
             WHERE ec.event_id = v_event_id
@@ -176,7 +269,14 @@ BEGIN
         p_price_guest := (p_base_event->>'price_guest')::DECIMAL,
         p_member_only := (p_base_event->>'member_only')::BOOLEAN,
         p_equipment_provided := (p_base_event->>'equipment_provided')::BOOLEAN,
-        p_special_instructions := p_base_event->>'special_instructions'
+        p_special_instructions := p_base_event->>'special_instructions',
+        p_dupr_bracket_id := (p_base_event->>'dupr_bracket_id')::UUID,
+        p_dupr_range_label := p_base_event->>'dupr_range_label',
+        p_dupr_min_rating := (p_base_event->>'dupr_min_rating')::NUMERIC,
+        p_dupr_max_rating := (p_base_event->>'dupr_max_rating')::NUMERIC,
+        p_dupr_open_ended := COALESCE((p_base_event->>'dupr_open_ended')::BOOLEAN, false),
+        p_dupr_min_inclusive := COALESCE((p_base_event->>'dupr_min_inclusive')::BOOLEAN, true),
+        p_dupr_max_inclusive := COALESCE((p_base_event->>'dupr_max_inclusive')::BOOLEAN, true)
     )->>'event_id')::UUID;
 
     v_event_count := 1;
@@ -270,7 +370,14 @@ BEGIN
             p_price_guest := (p_base_event->>'price_guest')::DECIMAL,
             p_member_only := (p_base_event->>'member_only')::BOOLEAN,
             p_equipment_provided := (p_base_event->>'equipment_provided')::BOOLEAN,
-            p_special_instructions := p_base_event->>'special_instructions'
+            p_special_instructions := p_base_event->>'special_instructions',
+            p_dupr_bracket_id := (p_base_event->>'dupr_bracket_id')::UUID,
+            p_dupr_range_label := p_base_event->>'dupr_range_label',
+            p_dupr_min_rating := (p_base_event->>'dupr_min_rating')::NUMERIC,
+            p_dupr_max_rating := (p_base_event->>'dupr_max_rating')::NUMERIC,
+            p_dupr_open_ended := COALESCE((p_base_event->>'dupr_open_ended')::BOOLEAN, false),
+            p_dupr_min_inclusive := COALESCE((p_base_event->>'dupr_min_inclusive')::BOOLEAN, true),
+            p_dupr_max_inclusive := COALESCE((p_base_event->>'dupr_max_inclusive')::BOOLEAN, true)
         )->>'event_id')::UUID;
 
         -- Add to series
@@ -567,6 +674,7 @@ CREATE OR REPLACE FUNCTION api.register_for_event(
     p_player_email VARCHAR DEFAULT NULL,
     p_player_phone VARCHAR DEFAULT NULL,
     p_skill_level events.skill_level DEFAULT NULL,
+    p_dupr_rating NUMERIC DEFAULT NULL,
     p_notes TEXT DEFAULT NULL
 )
 RETURNS JSON
@@ -584,10 +692,37 @@ DECLARE
     v_player_first_name TEXT;
     v_player_last_name TEXT;
     v_player_email TEXT;
+    v_event_type events.event_type;
+    v_dupr_min_rating NUMERIC(3, 2);
+    v_dupr_max_rating NUMERIC(3, 2);
+    v_dupr_open_ended BOOLEAN;
+    v_dupr_min_inclusive BOOLEAN;
+    v_dupr_max_inclusive BOOLEAN;
+    v_required_dupr BOOLEAN := false;
+    v_player_dupr_rating NUMERIC(3, 2);
+    v_effective_dupr_rating NUMERIC(3, 2);
 BEGIN
     -- Get event details
-    SELECT current_registrations, max_capacity, waitlist_capacity
-    INTO v_current_registrations, v_max_capacity, v_waitlist_capacity
+    SELECT
+        current_registrations,
+        max_capacity,
+        waitlist_capacity,
+        event_type,
+        dupr_min_rating,
+        dupr_max_rating,
+        dupr_open_ended,
+        dupr_min_inclusive,
+        dupr_max_inclusive
+    INTO
+        v_current_registrations,
+        v_max_capacity,
+        v_waitlist_capacity,
+        v_event_type,
+        v_dupr_min_rating,
+        v_dupr_max_rating,
+        v_dupr_open_ended,
+        v_dupr_min_inclusive,
+        v_dupr_max_inclusive
     FROM events.events
     WHERE id = p_event_id
     AND is_published = true
@@ -598,10 +733,12 @@ BEGIN
         RAISE EXCEPTION 'Event not found or registration closed';
     END IF;
 
+    v_required_dupr := v_event_type IN ('dupr_open_play', 'dupr_tournament');
+
     -- Resolve authenticated player profile if available
     IF auth.uid() IS NOT NULL THEN
-        SELECT p.id, p.first_name, p.last_name, ua.email
-        INTO v_player_id, v_player_first_name, v_player_last_name, v_player_email
+        SELECT p.id, p.first_name, p.last_name, ua.email, p.dupr_rating
+        INTO v_player_id, v_player_first_name, v_player_last_name, v_player_email, v_player_dupr_rating
         FROM app_auth.players p
         JOIN app_auth.user_accounts ua ON ua.id = p.account_id
         WHERE p.account_id = auth.uid();
@@ -618,6 +755,41 @@ BEGIN
         AND status IN ('registered', 'waitlisted')
     ) THEN
         RAISE EXCEPTION 'Already registered for this event';
+    END IF;
+
+    -- Validate DUPR requirements when applicable
+    IF v_required_dupr THEN
+        v_effective_dupr_rating := COALESCE(v_player_dupr_rating, p_dupr_rating);
+
+        IF v_effective_dupr_rating IS NULL THEN
+            RAISE EXCEPTION 'DUPR rating is required to register for this event';
+        END IF;
+
+        IF v_dupr_min_rating IS NOT NULL THEN
+            IF v_dupr_min_inclusive THEN
+                IF v_effective_dupr_rating < v_dupr_min_rating THEN
+                    RAISE EXCEPTION 'Player DUPR rating % is below the minimum % for this event', v_effective_dupr_rating, v_dupr_min_rating;
+                END IF;
+            ELSE
+                IF v_effective_dupr_rating <= v_dupr_min_rating THEN
+                    RAISE EXCEPTION 'Player DUPR rating % must be greater than % for this event', v_effective_dupr_rating, v_dupr_min_rating;
+                END IF;
+            END IF;
+        END IF;
+
+        IF NOT v_dupr_open_ended AND v_dupr_max_rating IS NOT NULL THEN
+            IF v_dupr_max_inclusive THEN
+                IF v_effective_dupr_rating > v_dupr_max_rating THEN
+                    RAISE EXCEPTION 'Player DUPR rating % exceeds the maximum % for this event', v_effective_dupr_rating, v_dupr_max_rating;
+                END IF;
+            ELSE
+                IF v_effective_dupr_rating >= v_dupr_max_rating THEN
+                    RAISE EXCEPTION 'Player DUPR rating % must be less than % for this event', v_effective_dupr_rating, v_dupr_max_rating;
+                END IF;
+            END IF;
+        END IF;
+    ELSE
+        v_effective_dupr_rating := COALESCE(v_player_dupr_rating, p_dupr_rating);
     END IF;
 
     -- Determine registration status
@@ -637,6 +809,7 @@ BEGIN
         player_email,
         player_phone,
         skill_level,
+        dupr_rating,
         status,
         notes
     ) VALUES (
@@ -649,6 +822,7 @@ BEGIN
         COALESCE(p_player_email, v_player_email),
         p_player_phone,
         p_skill_level,
+        v_effective_dupr_rating,
         v_status,
         p_notes
     ) RETURNING id INTO v_registration_id;
@@ -658,6 +832,7 @@ BEGIN
         'registration_id', v_registration_id,
         'event_id', p_event_id,
         'status', v_status,
+        'dupr_rating', v_effective_dupr_rating,
         'position', CASE
             WHEN v_status = 'registered' THEN v_current_registrations + 1
             ELSE v_current_registrations - v_max_capacity + 1
@@ -769,10 +944,10 @@ BEGIN
                 'start', e.start_time,
                 'end', e.end_time,
                 'color', CASE e.event_type
-                    WHEN 'scramble' THEN '#B3FF00'
-                    WHEN 'dupr' THEN '#0EA5E9'
-                    WHEN 'open_play' THEN '#FB923C'
-                    WHEN 'tournament' THEN '#EF4444'
+                    WHEN 'event_scramble' THEN '#B3FF00'
+                    WHEN 'dupr_open_play' THEN '#0EA5E9'
+                    WHEN 'dupr_tournament' THEN '#1D4ED8'
+                    WHEN 'non_dupr_tournament' THEN '#EF4444'
                     WHEN 'league' THEN '#8B5CF6'
                     WHEN 'clinic' THEN '#10B981'
                     WHEN 'private_lesson' THEN '#64748B'
@@ -780,6 +955,17 @@ BEGIN
                 END,
                 'capacity', e.max_capacity,
                 'registered', e.current_registrations,
+                'dupr_range', CASE
+                    WHEN e.event_type IN ('dupr_open_play', 'dupr_tournament') THEN json_build_object(
+                        'label', e.dupr_range_label,
+                        'min_rating', e.dupr_min_rating,
+                        'max_rating', e.dupr_max_rating,
+                        'min_inclusive', e.dupr_min_inclusive,
+                        'max_inclusive', e.dupr_max_inclusive,
+                        'open_ended', e.dupr_open_ended
+                    )
+                    ELSE NULL
+                END,
                 'courts', (
                     SELECT array_agg(c.court_number ORDER BY c.court_number)
                     FROM events.event_courts ec

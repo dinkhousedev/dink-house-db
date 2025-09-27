@@ -13,16 +13,19 @@ COMMENT ON SCHEMA events IS 'Calendar event management and court scheduling';
 -- Grant usage on schema
 GRANT USAGE ON SCHEMA events TO postgres;
 GRANT CREATE ON SCHEMA events TO postgres;
+GRANT USAGE ON SCHEMA events TO service_role;
+GRANT USAGE ON SCHEMA events TO authenticated;
+GRANT USAGE ON SCHEMA events TO anon;
 
 -- ============================================================================
 -- ENUMS AND TYPES
 -- ============================================================================
 
 CREATE TYPE events.event_type AS ENUM (
-    'scramble',
-    'dupr',
-    'open_play',
-    'tournament',
+    'event_scramble',
+    'dupr_open_play',
+    'dupr_tournament',
+    'non_dupr_tournament',
     'league',
     'clinic',
     'private_lesson'
@@ -33,6 +36,11 @@ CREATE TYPE events.court_surface AS ENUM (
     'clay',
     'grass',
     'indoor'
+);
+
+CREATE TYPE events.court_environment AS ENUM (
+    'indoor',
+    'outdoor'
 );
 
 CREATE TYPE events.court_status AS ENUM (
@@ -70,6 +78,7 @@ CREATE TABLE events.courts (
     court_number INTEGER NOT NULL UNIQUE,
     name VARCHAR(100) NOT NULL,
     surface_type events.court_surface DEFAULT 'hard',
+    environment events.court_environment NOT NULL DEFAULT 'indoor',
     status events.court_status DEFAULT 'available',
     location VARCHAR(100),
     features JSONB DEFAULT '[]'::jsonb, -- lights, covered, etc.
@@ -84,6 +93,38 @@ COMMENT ON TABLE events.courts IS 'Physical courts available for booking';
 -- Create indexes
 CREATE INDEX idx_courts_status ON events.courts(status);
 CREATE INDEX idx_courts_number ON events.courts(court_number);
+CREATE INDEX idx_courts_environment ON events.courts(environment);
+
+-- ============================================================================
+-- DUPR BRACKETS TABLE
+-- ============================================================================
+
+CREATE TABLE events.dupr_brackets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    label VARCHAR(100) NOT NULL UNIQUE,
+    min_rating NUMERIC(3, 2),
+    min_inclusive BOOLEAN DEFAULT true,
+    max_rating NUMERIC(3, 2),
+    max_inclusive BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT dupr_bracket_presence CHECK (
+        min_rating IS NOT NULL OR max_rating IS NOT NULL
+    ),
+    CONSTRAINT dupr_bracket_bounds CHECK (
+        max_rating IS NULL OR min_rating IS NULL OR max_rating >= min_rating
+    )
+);
+
+COMMENT ON TABLE events.dupr_brackets IS 'Standard DUPR rating brackets available for event configuration';
+
+-- Create indexes
+CREATE INDEX idx_dupr_brackets_min_rating ON events.dupr_brackets(min_rating);
+CREATE INDEX idx_dupr_brackets_max_rating ON events.dupr_brackets(max_rating);
+
+GRANT SELECT ON events.dupr_brackets TO service_role;
+GRANT SELECT ON events.dupr_brackets TO authenticated;
 
 -- ============================================================================
 -- EVENT TEMPLATES TABLE
@@ -101,12 +142,43 @@ CREATE TABLE events.event_templates (
     price_member DECIMAL(10, 2) DEFAULT 0,
     price_guest DECIMAL(10, 2) DEFAULT 0,
     court_preferences JSONB DEFAULT '{"count": 2}'::jsonb,
+    dupr_bracket_id UUID REFERENCES events.dupr_brackets(id),
+    dupr_range_label VARCHAR(100),
+    dupr_min_rating NUMERIC(3, 2),
+    dupr_max_rating NUMERIC(3, 2),
+    dupr_open_ended BOOLEAN DEFAULT false,
+    dupr_min_inclusive BOOLEAN DEFAULT true,
+    dupr_max_inclusive BOOLEAN DEFAULT true,
     equipment_provided BOOLEAN DEFAULT false,
     settings JSONB DEFAULT '{}'::jsonb,
     is_active BOOLEAN DEFAULT true,
     created_by UUID REFERENCES app_auth.admin_users(id),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT template_dupr_fields CHECK (
+        CASE WHEN event_type IN ('dupr_open_play', 'dupr_tournament') THEN
+            (
+                (dupr_bracket_id IS NOT NULL)
+                OR (dupr_range_label IS NOT NULL AND dupr_min_rating IS NOT NULL)
+            )
+            AND (dupr_open_ended = true OR dupr_max_rating IS NOT NULL)
+        ELSE
+            dupr_bracket_id IS NULL
+            AND dupr_range_label IS NULL
+            AND dupr_min_rating IS NULL
+            AND dupr_max_rating IS NULL
+            AND dupr_open_ended = false
+            AND dupr_min_inclusive = true
+            AND dupr_max_inclusive = true
+        END
+    ),
+    CONSTRAINT template_dupr_bounds CHECK (
+        dupr_max_rating IS NULL OR dupr_min_rating IS NULL OR dupr_max_rating >= dupr_min_rating
+    ),
+    CONSTRAINT template_dupr_open_ended CHECK (
+        dupr_open_ended = false OR dupr_max_rating IS NULL
+    )
 );
 
 COMMENT ON TABLE events.event_templates IS 'Reusable event configurations';
@@ -114,6 +186,7 @@ COMMENT ON TABLE events.event_templates IS 'Reusable event configurations';
 -- Create indexes
 CREATE INDEX idx_event_templates_active ON events.event_templates(is_active);
 CREATE INDEX idx_event_templates_type ON events.event_templates(event_type);
+CREATE INDEX idx_event_templates_dupr_bracket ON events.event_templates(dupr_bracket_id);
 
 -- ============================================================================
 -- EVENTS TABLE
@@ -139,6 +212,13 @@ CREATE TABLE events.events (
 
     -- Requirements
     skill_levels events.skill_level[] DEFAULT ARRAY['2.0', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0']::events.skill_level[],
+    dupr_bracket_id UUID REFERENCES events.dupr_brackets(id),
+    dupr_range_label VARCHAR(100),
+    dupr_min_rating NUMERIC(3, 2),
+    dupr_max_rating NUMERIC(3, 2),
+    dupr_open_ended BOOLEAN DEFAULT false,
+    dupr_min_inclusive BOOLEAN DEFAULT true,
+    dupr_max_inclusive BOOLEAN DEFAULT true,
     member_only BOOLEAN DEFAULT false,
 
     -- Pricing
@@ -164,7 +244,30 @@ CREATE TABLE events.events (
     -- Constraints
     CONSTRAINT valid_time_range CHECK (end_time > start_time),
     CONSTRAINT valid_capacity CHECK (max_capacity >= min_capacity),
-    CONSTRAINT valid_registrations CHECK (current_registrations >= 0)
+    CONSTRAINT valid_registrations CHECK (current_registrations >= 0),
+    CONSTRAINT dupr_fields_required CHECK (
+        CASE WHEN event_type IN ('dupr_open_play', 'dupr_tournament') THEN
+            (
+                (dupr_bracket_id IS NOT NULL)
+                OR (dupr_range_label IS NOT NULL AND dupr_min_rating IS NOT NULL)
+            )
+            AND (dupr_open_ended = true OR dupr_max_rating IS NOT NULL)
+        ELSE
+            dupr_bracket_id IS NULL
+            AND dupr_range_label IS NULL
+            AND dupr_min_rating IS NULL
+            AND dupr_max_rating IS NULL
+            AND dupr_open_ended = false
+            AND dupr_min_inclusive = true
+            AND dupr_max_inclusive = true
+        END
+    ),
+    CONSTRAINT dupr_bounds CHECK (
+        dupr_max_rating IS NULL OR dupr_min_rating IS NULL OR dupr_max_rating >= dupr_min_rating
+    ),
+    CONSTRAINT dupr_open_ended CHECK (
+        dupr_open_ended = false OR dupr_max_rating IS NULL
+    )
 );
 
 COMMENT ON TABLE events.events IS 'Calendar events and sessions';
@@ -176,6 +279,7 @@ CREATE INDEX idx_events_type ON events.events(event_type);
 CREATE INDEX idx_events_published ON events.events(is_published);
 CREATE INDEX idx_events_cancelled ON events.events(is_cancelled);
 CREATE INDEX idx_events_date_range ON events.events(start_time, end_time);
+CREATE INDEX idx_events_dupr_bracket ON events.events(dupr_bracket_id);
 
 -- ============================================================================
 -- EVENT COURTS TABLE (Many-to-Many)
@@ -302,6 +406,7 @@ CREATE TABLE events.event_registrations (
     player_email VARCHAR(255),
     player_phone VARCHAR(50),
     skill_level events.skill_level,
+    dupr_rating NUMERIC(3, 2),
 
     -- Registration details
     status events.registration_status DEFAULT 'registered',
@@ -378,6 +483,10 @@ $$ LANGUAGE plpgsql;
 -- Apply update trigger to relevant tables
 CREATE TRIGGER update_courts_updated_at
     BEFORE UPDATE ON events.courts
+    FOR EACH ROW EXECUTE FUNCTION events.update_updated_at();
+
+CREATE TRIGGER update_dupr_brackets_updated_at
+    BEFORE UPDATE ON events.dupr_brackets
     FOR EACH ROW EXECUTE FUNCTION events.update_updated_at();
 
 CREATE TRIGGER update_templates_updated_at

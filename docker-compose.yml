@@ -139,8 +139,8 @@ services:
       GOTRUE_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
       GOTRUE_EXTERNAL_EMAIL_ENABLED: ${ENABLE_EMAIL_SIGNUP:-true}
       GOTRUE_MAILER_AUTOCONFIRM: ${ENABLE_EMAIL_AUTOCONFIRM:-false}
-      GOTRUE_SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-mailpit}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-1025}
       GOTRUE_SMTP_USER: ${SMTP_USER:-}
       GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
       GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@dinkhouse.com}
@@ -258,6 +258,22 @@ services:
       - --main-service
       - /home/deno/functions/main
 
+  # Mailpit - Email testing tool (Development only)
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: dink-house-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    volumes:
+      - mailpit_data:/data
+    networks:
+      - supabase-network
+
 networks:
   supabase-network:
     driver: bridge
@@ -268,4 +284,6 @@ volumes:
   storage_data:
     driver: local
   functions_data:
+    driver: local
+  mailpit_data:
     driver: local

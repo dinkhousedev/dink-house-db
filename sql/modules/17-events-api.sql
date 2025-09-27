@@ -30,6 +30,29 @@ SELECT
     e.cancellation_reason,
     e.equipment_provided,
     e.special_instructions,
+    e.dupr_bracket_id,
+    e.dupr_range_label,
+    e.dupr_min_rating,
+    e.dupr_max_rating,
+    e.dupr_open_ended,
+    e.dupr_min_inclusive,
+    e.dupr_max_inclusive,
+    CASE
+        WHEN e.event_type IN ('dupr_open_play', 'dupr_tournament') THEN
+            jsonb_build_object(
+                'source', CASE WHEN e.dupr_bracket_id IS NOT NULL THEN 'catalog' ELSE 'custom' END,
+                'label', COALESCE(e.dupr_range_label, db.label),
+                'min_rating', COALESCE(db.min_rating, e.dupr_min_rating),
+                'max_rating', COALESCE(db.max_rating, e.dupr_max_rating),
+                'min_inclusive', COALESCE(db.min_inclusive, e.dupr_min_inclusive),
+                'max_inclusive', COALESCE(db.max_inclusive, e.dupr_max_inclusive),
+                'open_ended', CASE
+                    WHEN e.dupr_bracket_id IS NOT NULL THEN (db.max_rating IS NULL)
+                    ELSE e.dupr_open_ended
+                END
+            )
+        ELSE NULL
+    END AS dupr_range,
 
     -- Template info
     et.name AS template_name,
@@ -42,6 +65,7 @@ SELECT
                 'court_number', c.court_number,
                 'name', c.name,
                 'surface_type', c.surface_type,
+                'environment', c.environment,
                 'is_primary', ec.is_primary
             ) ORDER BY ec.is_primary DESC, c.court_number
         ) FILTER (WHERE c.id IS NOT NULL),
@@ -73,8 +97,9 @@ FROM
     LEFT JOIN events.event_series_instances esi ON e.id = esi.event_id
     LEFT JOIN events.event_series es ON esi.series_id = es.id
     LEFT JOIN events.recurrence_patterns rp ON es.recurrence_pattern_id = rp.id
+    LEFT JOIN events.dupr_brackets db ON e.dupr_bracket_id = db.id
 GROUP BY
-    e.id, et.name, esi.series_id, es.series_name, rp.frequency;
+    e.id, et.name, esi.series_id, es.series_name, rp.frequency, db.label, db.min_rating, db.max_rating, db.min_inclusive, db.max_inclusive;
 
 COMMENT ON VIEW api.events_calendar_view IS 'Main calendar view with event details and court assignments';
 
@@ -102,6 +127,7 @@ SELECT
     c.court_number,
     c.name,
     c.surface_type,
+    c.environment,
     c.status,
     c.location,
     c.features,
@@ -160,6 +186,13 @@ SELECT
     et.price_member,
     et.price_guest,
     et.court_preferences,
+    et.dupr_bracket_id,
+    et.dupr_range_label,
+    et.dupr_min_rating,
+    et.dupr_max_rating,
+    et.dupr_open_ended,
+    et.dupr_min_inclusive,
+    et.dupr_max_inclusive,
     et.equipment_provided,
     et.settings,
     et.is_active,
@@ -197,6 +230,7 @@ SELECT
     er.player_email,
     er.player_phone,
     er.skill_level,
+    er.dupr_rating,
     er.status,
     er.registration_time,
     er.check_in_time,
@@ -381,13 +415,13 @@ SELECT
 
     -- Color coding helper
     CASE e.event_type
-        WHEN 'scramble' THEN '#B3FF00'      -- Lime
-        WHEN 'dupr' THEN '#0EA5E9'          -- Blue
-        WHEN 'open_play' THEN '#FB923C'     -- Orange
-        WHEN 'tournament' THEN '#EF4444'     -- Red
-        WHEN 'league' THEN '#8B5CF6'        -- Purple
-        WHEN 'clinic' THEN '#10B981'        -- Green
-        WHEN 'private_lesson' THEN '#64748B' -- Gray
+        WHEN 'event_scramble' THEN '#B3FF00'      -- Lime
+        WHEN 'dupr_open_play' THEN '#0EA5E9'      -- Blue
+        WHEN 'dupr_tournament' THEN '#1D4ED8'     -- Indigo
+        WHEN 'non_dupr_tournament' THEN '#EF4444' -- Red
+        WHEN 'league' THEN '#8B5CF6'              -- Purple
+        WHEN 'clinic' THEN '#10B981'              -- Green
+        WHEN 'private_lesson' THEN '#64748B'      -- Gray
         ELSE '#6B7280'
     END AS event_color
 FROM

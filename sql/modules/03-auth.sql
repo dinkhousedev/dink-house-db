@@ -100,11 +100,14 @@ CREATE TABLE IF NOT EXISTS app_auth.players (
     last_name TEXT NOT NULL,
     display_name TEXT,
     phone TEXT,
+    address TEXT,
     date_of_birth DATE,
     membership_level app_auth.membership_level DEFAULT 'guest',
     membership_started_on DATE,
     membership_expires_on DATE,
     skill_level app_auth.skill_level,
+    dupr_rating NUMERIC(3, 2),
+    dupr_rating_updated_at TIMESTAMP WITH TIME ZONE,
     club_id UUID,
     profile JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -178,6 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_users_name ON app_auth.admin_users(last_nam
 
 CREATE INDEX IF NOT EXISTS idx_players_membership ON app_auth.players(membership_level);
 CREATE INDEX IF NOT EXISTS idx_players_skill_level ON app_auth.players(skill_level);
+CREATE INDEX IF NOT EXISTS idx_players_dupr_rating ON app_auth.players(dupr_rating);
 CREATE INDEX IF NOT EXISTS idx_players_name ON app_auth.players(last_name, first_name);
 
 CREATE INDEX IF NOT EXISTS idx_guest_users_expiry ON app_auth.guest_users(expires_at);

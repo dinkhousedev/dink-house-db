@@ -14,10 +14,10 @@ const config = {
   // Database Connection
   database: {
     host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 9432,
+    port: process.env.DB_PORT || 5432,
     database: process.env.POSTGRES_DB || 'dink_house',
     user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || 'DevPassword123!',
+    password: process.env.POSTGRES_PASSWORD || 'postgres',
   },
 
   // JWT Configuration
@@ -25,6 +25,27 @@ const config = {
     secret: process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production',
     expiresIn: process.env.JWT_EXPIRY || 3600,
     algorithm: 'HS256',
+  },
+
+  // Email Configuration
+  email: {
+    enabled: process.env.NODE_ENV === 'development' || process.env.SMTP_HOST ? true : false,
+    smtp: {
+      host: process.env.SMTP_HOST || (process.env.NODE_ENV === 'development' ? 'localhost' : 'smtp.gmail.com'),
+      port: process.env.SMTP_PORT || (process.env.NODE_ENV === 'development' ? 1025 : 587),
+      secure: process.env.NODE_ENV !== 'development', // false for Mailpit, true for production
+      auth: process.env.NODE_ENV === 'development' ? undefined : {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    },
+    from: process.env.EMAIL_FROM || 'noreply@dinkhouse.local',
+    templates: {
+      verification: 'email-verification',
+      passwordReset: 'password-reset',
+      welcome: 'welcome',
+      notification: 'notification',
+    },
   },
 
   // API Settings
@@ -61,27 +82,6 @@ const config = {
     },
   },
 
-  // Email Configuration
-  email: {
-    enabled: process.env.SMTP_HOST ? true : false,
-    smtp: {
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: process.env.SMTP_PORT || 587,
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    },
-    from: process.env.EMAIL_FROM || 'noreply@dinkhouse.com',
-    templates: {
-      verification: 'email-verification',
-      passwordReset: 'password-reset',
-      welcome: 'welcome',
-      notification: 'notification',
-    },
-  },
-
   // Feature Flags
   features: {
     registration: true,
@@ -102,4 +102,5 @@ const config = {
   },
 };
 
+// Export the config object
 module.exports = config;

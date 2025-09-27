@@ -86,7 +86,17 @@ BEGIN
     LIMIT 1;
 
     IF NOT FOUND THEN
-        RETURN json_build_object('success', false, 'error', 'Invalid credentials');
+        RETURN json_build_object('success', false, 'error', 'Account does not exist');
+    END IF;
+
+    -- Check if player is trying to access admin platform
+    IF v_account.user_type = 'player' THEN
+        RETURN json_build_object('success', false, 'error', 'Players cannot access the admin platform');
+    END IF;
+
+    -- Check if guest is trying to access admin platform
+    IF v_account.user_type = 'guest' THEN
+        RETURN json_build_object('success', false, 'error', 'Guest accounts cannot access the admin platform');
     END IF;
 
     -- Load persona profile details
@@ -105,37 +115,6 @@ BEGIN
             'first_name', v_admin.first_name,
             'last_name', v_admin.last_name,
             'role', v_admin.role
-        );
-    ELSIF v_account.user_type = 'player' THEN
-        SELECT * INTO v_player
-        FROM app_auth.players
-        WHERE account_id = v_account.id;
-
-        IF v_player IS NULL THEN
-            RETURN json_build_object('success', false, 'error', 'Player profile not found');
-        END IF;
-
-        v_user_profile := jsonb_build_object(
-            'id', v_player.id,
-            'first_name', v_player.first_name,
-            'last_name', v_player.last_name,
-            'display_name', v_player.display_name,
-            'membership_level', v_player.membership_level,
-            'skill_level', v_player.skill_level
-        );
-    ELSE
-        SELECT * INTO v_guest
-        FROM app_auth.guest_users
-        WHERE account_id = v_account.id;
-
-        IF v_guest IS NULL THEN
-            RETURN json_build_object('success', false, 'error', 'Guest profile not found');
-        END IF;
-
-        v_user_profile := jsonb_build_object(
-            'id', v_guest.id,
-            'display_name', v_guest.display_name,
-            'expires_at', v_guest.expires_at
         );
     END IF;
 
@@ -159,23 +138,9 @@ BEGIN
         RETURN json_build_object('success', false, 'error', 'Account is inactive');
     END IF;
 
-    -- Check if account is verified (guests are exempt)
-    IF v_account.user_type <> 'guest' AND NOT v_account.is_verified THEN
+    -- Check if account is verified (admin accounts must be verified)
+    IF NOT v_account.is_verified THEN
         RETURN json_build_object('success', false, 'error', 'Please verify your email address');
-    END IF;
-
-    -- Guest-specific checks
-    IF v_account.user_type = 'guest' THEN
-        IF v_account.temporary_expires_at IS NULL OR v_account.temporary_expires_at < CURRENT_TIMESTAMP THEN
-            RETURN json_build_object('success', false, 'error', 'Guest access has expired');
-        END IF;
-
-        IF v_guest IS NULL OR v_guest.expires_at < CURRENT_TIMESTAMP THEN
-            RETURN json_build_object('success', false, 'error', 'Guest access has expired');
-        END IF;
-
-        v_session_ttl := INTERVAL '6 hours';
-        v_refresh_ttl := INTERVAL '12 hours';
     END IF;
 
     -- Generate tokens
@@ -595,6 +560,64 @@ BEGIN
     END IF;
 
     RETURN v_result;
+END;
+$$;
+
+-- Validate session token
+CREATE OR REPLACE FUNCTION api.validate_session(
+    p_session_token TEXT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_session RECORD;
+    v_account RECORD;
+    v_admin RECORD;
+BEGIN
+    -- Find session by token
+    SELECT s.*, ua.*, au.*
+    INTO v_session
+    FROM app_auth.sessions s
+    JOIN app_auth.user_accounts ua ON ua.id = s.account_id
+    LEFT JOIN app_auth.admin_users au ON au.account_id = ua.id
+    WHERE s.token_hash = encode(public.digest(p_session_token, 'sha256'), 'hex')
+      AND s.expires_at > CURRENT_TIMESTAMP;
+
+    IF NOT FOUND THEN
+        RETURN json_build_object('success', false, 'error', 'Invalid or expired session');
+    END IF;
+
+    -- Only allow admin accounts
+    IF v_session.user_type != 'admin' THEN
+        RETURN json_build_object('success', false, 'error', 'Access denied');
+    END IF;
+
+    -- Get admin profile
+    SELECT * INTO v_admin
+    FROM app_auth.admin_users
+    WHERE account_id = v_session.account_id;
+
+    IF v_admin IS NULL THEN
+        RETURN json_build_object('success', false, 'error', 'Admin profile not found');
+    END IF;
+
+    RETURN json_build_object(
+        'success', true,
+        'user', jsonb_build_object(
+            'account_id', v_session.account_id,
+            'user_type', v_session.user_type,
+            'email', (SELECT email FROM app_auth.user_accounts WHERE id = v_session.account_id),
+            'profile', jsonb_build_object(
+                'id', v_admin.id,
+                'username', v_admin.username,
+                'first_name', v_admin.first_name,
+                'last_name', v_admin.last_name,
+                'role', v_admin.role
+            )
+        )
+    );
 END;
 $$;
 
@@ -1446,6 +1469,8 @@ GRANT EXECUTE ON FUNCTION api.global_search TO anon;
 GRANT EXECUTE ON FUNCTION api.logout TO authenticated;
 GRANT EXECUTE ON FUNCTION api.refresh_token TO authenticated;
 GRANT EXECUTE ON FUNCTION api.refresh_token TO service_role;
+GRANT EXECUTE ON FUNCTION api.validate_session TO authenticated;
+GRANT EXECUTE ON FUNCTION api.validate_session TO service_role;
 GRANT EXECUTE ON FUNCTION api.upsert_content TO authenticated;
 
 -- Admin functions

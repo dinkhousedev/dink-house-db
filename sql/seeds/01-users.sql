@@ -17,13 +17,13 @@ WITH base_accounts AS (
         is_verified,
         last_login
     ) VALUES
-        ('admin@dinkhouse.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
-        ('editor@dinkhouse.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
-        ('viewer@dinkhouse.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
-        ('john.doe@example.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
-        ('jane.smith@example.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
-        ('player.one@example.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'player'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
-        ('guest.one@example.com', public.crypt('DevPassword123!', public.gen_salt('bf', 8)), 'guest'::app_auth.user_type, true, false, NULL)
+        ('admin@dinkhouse.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
+        ('editor@dinkhouse.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
+        ('viewer@dinkhouse.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
+        ('john.doe@example.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
+        ('jane.smith@example.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'admin'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
+        ('player.one@example.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'player'::app_auth.user_type, true, true, CURRENT_TIMESTAMP),
+        ('guest.one@example.com', crypt('DevPassword123!', gen_salt('bf', 8)), 'guest'::app_auth.user_type, true, false, NULL)
     RETURNING id, email, user_type
 )
 INSERT INTO app_auth.admin_users (id, account_id, username, first_name, last_name, role)
@@ -104,7 +104,7 @@ INSERT INTO app_auth.api_keys (account_id, name, key_hash, permissions, is_activ
 SELECT
     ua.id,
     'Development API Key',
-    public.crypt('dev_api_key_admin', public.gen_salt('bf', 8)),
+    crypt('dev_api_key_admin', gen_salt('bf', 8)),
     '["read", "write"]'::jsonb,
     true
 FROM app_auth.user_accounts ua

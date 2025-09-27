@@ -139,14 +139,18 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create triggers for updated_at
+DROP TRIGGER IF EXISTS update_courts_updated_at ON events.courts;
 CREATE TRIGGER update_courts_updated_at BEFORE UPDATE ON events.courts
     FOR EACH ROW EXECUTE FUNCTION events.update_updated_at();
 
+DROP TRIGGER IF EXISTS update_events_updated_at ON events.events;
 CREATE TRIGGER update_events_updated_at BEFORE UPDATE ON events.events
     FOR EACH ROW EXECUTE FUNCTION events.update_updated_at();
 
+DROP TRIGGER IF EXISTS update_event_templates_updated_at ON events.event_templates;
 CREATE TRIGGER update_event_templates_updated_at BEFORE UPDATE ON events.event_templates
     FOR EACH ROW EXECUTE FUNCTION events.update_updated_at();
 
+DROP TRIGGER IF EXISTS update_event_registrations_updated_at ON events.event_registrations;
 CREATE TRIGGER update_event_registrations_updated_at BEFORE UPDATE ON events.event_registrations
     FOR EACH ROW EXECUTE FUNCTION events.update_updated_at();

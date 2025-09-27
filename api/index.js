@@ -4,12 +4,14 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
+const createEventsRouter = require('./routes/events');
+const createCourtsRouter = require('./routes/courts');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.API_PORT || 3001;
 
-const supabaseUrl = process.env.SUPABASE_URL || 'http://localhost:9002';
+const supabaseUrl = process.env.SUPABASE_URL || 'http://localhost:9003';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseServiceKey) {
@@ -17,7 +19,12 @@ if (!supabaseServiceKey) {
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
 app.use(helmet());
 app.use(cors());
@@ -76,27 +83,50 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
+    // Call the custom login function in the database
+    console.log('Attempting login for:', email);
+
+    // Make direct HTTP request to PostgREST with proper headers
+    const response = await fetch(`${supabaseUrl}/rpc/login_safe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Accept-Profile': 'api',
+        'Content-Profile': 'api'
+      },
+      body: JSON.stringify({ email, password })
     });
 
-    if (error) {
-      console.error('Login error:', error);
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Login RPC error:', error);
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const data = await response.json();
+
+    if (!data.success) {
+      return res.status(401).json({ error: data.error || 'Invalid credentials' });
+    }
+
+    // Check if user is an admin - only admins can access the admin panel
+    if (data.user?.user_type !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin accounts only.' });
     }
 
     res.json({
       message: 'Login successful',
-      session: data.session,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        metadata: data.user.user_metadata
-      }
+      session_token: data.session_token,
+      refresh_token: data.refresh_token,
+      expires_at: data.expires_at,
+      user: data.user
     });
   } catch (error) {
     console.error('Server error during login:', error);
+    console.error('Error details:', error.message);
+    console.error('Stack trace:', error.stack);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -236,12 +266,16 @@ app.post('/api/auth/update-password', async (req, res) => {
   }
 });
 
+app.use('/api/events', createEventsRouter(supabase));
+app.use('/api/courts', createCourtsRouter(supabase));
+
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Global error handler:', err);
+  console.error('Stack trace:', err.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
 

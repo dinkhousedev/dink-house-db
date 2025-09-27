@@ -20,17 +20,18 @@
     "docker:reset": "docker-compose down -v && docker-compose up -d"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
+    "@supabase/supabase-js": "^2.58.0",
     "bcrypt": "^5.1.1",
     "commander": "^14.0.1",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
+    "dotenv": "^16.6.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
     "inquirer": "^12.9.6",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "nodemailer": "^7.0.6",
     "pg": "^8.11.3",
     "uuid": "^9.0.1",
     "winston": "^3.11.0",
@@ -50,5 +51,17 @@
     "dink-house"
   ],
   "author": "Dink House",
-  "license": "MIT"
+  "license": "MIT",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dynamic3dPM/dink-house-db.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Dynamic3dPM/dink-house-db/issues"
+  },
+  "homepage": "https://github.com/Dynamic3dPM/dink-house-db#readme"
 }
