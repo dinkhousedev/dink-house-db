@@ -1,104 +1,86 @@
 # Dink House Database
 
-A modular PostgreSQL database setup with Docker, designed for easy local development and seamless migration to Supabase or any PostgreSQL hosting service.
+A modular PostgreSQL database setup powered by **Supabase Cloud**, with Express.js API for custom backend functionality.
 
 ## Features
 
-- 🐳 **Docker-based** - Fully containerized PostgreSQL setup
+- ☁️ **Cloud-Hosted** - Runs on Supabase Cloud (PostgreSQL)
 - 📦 **Modular Schema** - Well-organized SQL modules for different domains
-- 🔐 **Authentication System** - Built-in user management with roles and sessions
+- 🔐 **Authentication System** - Supabase Auth with JWT tokens
 - 📝 **Content Management** - Pages, categories, and media management
 - 📧 **Contact Management** - Form submissions and inquiry tracking
 - 🚀 **Launch Campaigns** - Subscriber management and notifications
 - 🎛️ **System Settings** - Configurable settings and feature flags
-- 🚀 **Supabase Studio** - Modern database management interface
-- 🔌 **Kong API Gateway** - RESTful API access to your database
+- 🚀 **Supabase Dashboard** - Modern cloud database management interface
+- 🔌 **Express API** - Custom REST API for backend operations
 - 🌱 **Seed Data** - Pre-configured development data
 
 ## Quick Start
 
 ### Prerequisites
-- Docker and Docker Compose installed
-- Git (optional, for version control)
+- Node.js 18+ installed
+- Access to Supabase Cloud project
 
 ### Installation
 
-1. **Clone or create the directory:**
+1. **Navigate to the directory:**
    ```bash
    cd dink-house-db
    ```
 
-2. **Copy the environment file:**
+2. **Install dependencies:**
    ```bash
-   cp .env.local .env
+   npm install
    ```
 
-3. **Start the database:**
-   ```bash
-   docker-compose up -d
+3. **Configure environment:**
+   The `.env.local` file is already configured for Supabase Cloud:
+   ```env
+   SUPABASE_URL=https://wchxzbuuwssrnaxshseu.supabase.co
+   SUPABASE_ANON_KEY=your-anon-key
+   SUPABASE_SERVICE_KEY=your-service-key
    ```
 
-4. **Wait for initialization (first run only):**
-   The database will automatically initialize with all schemas and seed data.
+4. **Start the API server:**
+   ```bash
+   npm run dev
+   ```
 
 ### Access
 
-- **PostgreSQL Database:**
-  - Host: `localhost`
-  - Port: `9432`
-  - Database: `dink_house`
-  - Username: `postgres`
-  - Password: `DevPassword123!`
+- **Supabase Cloud:**
+  - Project URL: `https://wchxzbuuwssrnaxshseu.supabase.co`
+  - Dashboard: `https://supabase.com/dashboard/project/wchxzbuuwssrnaxshseu`
 
-- **Supabase Studio:**
-  - URL: http://localhost:9000
-  - No login required (local development)
-  - Full database management interface
-  - Table editor, SQL editor, and API documentation
+- **Express API (Local):**
+  - URL: `http://localhost:3003`
+  - Provides custom REST API endpoints
+  - Connects to Supabase Cloud database
 
-- **Kong API Gateway:**
-  - URL: http://localhost:9002
-  - Provides REST API access to your database
-  - Anon Key: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` (see .env)
-
-### Default Users
-
-All default users have the password: `DevPassword123!`
-
-| Username | Email | Role |
-|----------|-------|------|
-| admin | admin@dinkhouse.com | super_admin |
-| editor | editor@dinkhouse.com | editor |
-| viewer | viewer@dinkhouse.com | viewer |
-| john.doe | john.doe@example.com | admin |
-| jane.smith | jane.smith@example.com | editor |
+- **Database Direct Connection:**
+  - Host: `aws-1-us-east-2.pooler.supabase.com`
+  - Port: `5432`
+  - Database: `postgres`
+  - Username: `postgres.wchxzbuuwssrnaxshseu`
+  - Password: (from environment variables)
 
 ## Project Structure
 
 ```
 dink-house-db/
-├── docker-compose.yml       # Docker Compose configuration
-├── Dockerfile              # PostgreSQL Docker image
-├── kong.yml               # Kong API Gateway configuration
-├── .env.local             # Environment variables template
-├── .gitignore            # Git ignore rules
-├── README.md             # This file
-└── sql/                  # SQL scripts
-    ├── init.sh          # Initialization script
-    ├── modules/         # Modular schema files
-    │   ├── 01-extensions.sql     # PostgreSQL extensions
-    │   ├── 02-auth.sql          # Authentication tables
-    │   ├── 03-content.sql       # Content management
-    │   ├── 04-contact.sql       # Contact management
-    │   ├── 05-launch.sql        # Launch campaigns
-    │   ├── 06-system.sql        # System settings
-    │   └── 07-functions.sql     # Functions and triggers
-    └── seeds/           # Seed data for development
-        ├── 01-users.sql         # Default users
-        ├── 02-content.sql       # Sample content
-        ├── 03-system.sql        # System settings
-        └── 04-sample-data.sql   # Sample data
-
+├── api/                  # Express.js API server
+│   ├── index.js         # Main API entry point
+│   ├── config/          # Configuration files
+│   ├── routes/          # API route handlers
+│   └── middleware/      # Express middleware
+├── sql/                 # SQL scripts and migrations
+│   ├── modules/         # Modular schema files (00-25)
+│   └── seeds/           # Seed data for development
+├── scripts/             # Utility scripts
+├── .env.local          # Environment variables (cloud config)
+├── .env.example        # Environment template
+├── package.json        # Node.js dependencies
+└── README.md           # This file
 ```
 
 ## Database Schema
@@ -130,73 +112,68 @@ Row Level Security (RLS) is enabled on sensitive tables for fine-grained access 
 
 ## Common Commands
 
-### Start the database
+### Start API server (development)
 ```bash
-docker-compose up -d
+npm run dev
 ```
 
-### Stop the database
+### Start API server (production)
 ```bash
-docker-compose down
+npm run start
 ```
 
-### View logs
+### Run tests
 ```bash
-docker-compose logs -f postgres
+npm test
 ```
 
-### Connect via psql
+### Database migrations
 ```bash
-docker exec -it dink-house-db psql -U postgres -d dink_house
+npm run db:migrate
 ```
 
-### Backup database
+### Seed database
 ```bash
-docker exec dink-house-db pg_dump -U postgres dink_house > backup.sql
+npm run db:seed
 ```
 
-### Restore database
+### Create admin user
 ```bash
-docker exec -i dink-house-db psql -U postgres dink_house < backup.sql
+npm run admin:create
 ```
 
-### Reset database (Warning: Deletes all data!)
+### Connect via psql (Cloud)
 ```bash
-docker-compose down -v
-docker-compose up -d
+psql postgresql://postgres.wchxzbuuwssrnaxshseu:[PASSWORD]@aws-1-us-east-2.pooler.supabase.com:5432/postgres
 ```
 
-## Migration to Production
+### Backup database (via Supabase CLI)
+```bash
+supabase db dump -f backup.sql --project-ref wchxzbuuwssrnaxshseu
+```
 
-### Supabase Migration
+## Cloud Database Management
 
-1. **Export schema:**
-   ```bash
-   docker exec dink-house-db pg_dump -U postgres --schema-only dink_house > schema.sql
-   ```
+### Already Using Supabase Cloud
 
-2. **Create Supabase project** at https://app.supabase.com
+This project is **already configured** to use Supabase Cloud. All database operations run against the cloud instance.
 
-3. **Connect to Supabase:**
-   ```bash
-   psql -h [your-project].supabase.co -p 5432 -d postgres -U postgres
-   ```
+### Managing Database via Supabase Dashboard
 
-4. **Import schema:**
-   ```bash
-   psql -h [your-project].supabase.co -p 5432 -d postgres -U postgres < schema.sql
-   ```
+Access the Supabase Dashboard for:
+- **Table Editor**: View and edit data directly
+- **SQL Editor**: Run custom queries
+- **Database Settings**: Manage users, roles, and policies
+- **Logs**: View database logs and activity
+- **Storage**: Manage file uploads
 
-### Other PostgreSQL Hosts
+Dashboard URL: `https://supabase.com/dashboard/project/wchxzbuuwssrnaxshseu`
 
-The database is compatible with any PostgreSQL 15+ hosting service:
-- AWS RDS
-- Google Cloud SQL
-- Azure Database
-- DigitalOcean Managed Databases
-- Heroku Postgres
+### Schema Migrations
 
-Simply use the backup/restore commands above with your production connection string.
+All schema changes should be applied via SQL Editor in Supabase Dashboard or using migration scripts in `sql/modules/`.
+
+**Important**: Always backup before applying schema changes in production.
 
 ## Development Tips
 
@@ -219,48 +196,50 @@ Add custom PostgreSQL functions in `sql/modules/07-functions.sql` or create a ne
 
 ## Security Notes
 
-⚠️ **For Development Only**: The default passwords and settings are for local development only. Before deploying to production:
+⚠️ **Production Environment**: This project uses Supabase Cloud which includes:
 
-1. Change all default passwords
-2. Update JWT secret
-3. Configure proper SMTP settings
-4. Enable SSL/TLS
-5. Set up proper firewall rules
-6. Implement backup strategy
-7. Configure monitoring
+- ✅ SSL/TLS enabled by default
+- ✅ Automatic backups
+- ✅ Row Level Security (RLS) policies
+- ✅ JWT authentication
+- ✅ Built-in monitoring
+
+**Important Security Tasks:**
+1. Keep API keys secure (never commit to git)
+2. Rotate keys periodically in Supabase Dashboard
+3. Review and update RLS policies regularly
+4. Monitor database activity via Dashboard
+5. Use service role key only on backend (never expose to clients)
 
 ## Troubleshooting
 
-### Port Already in Use
-Change the port in `.env`:
-```env
-DB_PORT=5433
-PGADMIN_PORT=5051
-```
+### API Connection Issues
+If the Express API can't connect to Supabase:
+1. Verify environment variables in `.env.local`
+2. Check Supabase project status in Dashboard
+3. Ensure API keys are valid and not expired
+4. Test connection: `curl https://wchxzbuuwssrnaxshseu.supabase.co`
 
-### Permission Denied
-Ensure Docker has proper permissions:
-```bash
-sudo chmod +x sql/init.sh
-```
+### Database Access Issues
+If you can't access the database:
+1. Check database credentials in `.env.local`
+2. Verify IP is allowed in Supabase Dashboard > Settings > Database
+3. Use connection pooler URL for better performance
+4. Check Supabase status: https://status.supabase.com
 
-### Slow Initialization
-First-time setup may take 1-2 minutes. Check logs:
-```bash
-docker-compose logs -f postgres
-```
+### Rate Limiting
+If you hit rate limits:
+1. Review your query patterns
+2. Implement proper caching
+3. Consider upgrading Supabase plan if needed
+4. Use connection pooling
 
-### Supabase Studio Connection Issues
-If Studio doesn't connect:
-1. Ensure PostgreSQL is healthy: `docker compose ps`
-2. Check pg-meta logs: `docker compose logs pg-meta`
-3. Restart services: `docker compose restart`
-
-### Kong API Gateway Issues
-For API access problems:
-1. Check Kong is running: `docker compose logs kong`
-2. Verify API keys in `.env` file
-3. Test with: `curl http://localhost:9002/rest/v1/`
+### Migration Issues
+If migrations fail:
+1. Check SQL syntax in migration files
+2. Verify user permissions in Supabase
+3. Run migrations one at a time
+4. Check logs in Supabase Dashboard
 
 ## License
 

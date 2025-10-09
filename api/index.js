@@ -6,6 +6,10 @@ const rateLimit = require('express-rate-limit');
 const { createClient } = require('@supabase/supabase-js');
 const createEventsRouter = require('./routes/events');
 const createCourtsRouter = require('./routes/courts');
+const createOpenPlayRouter = require('./routes/open-play');
+const subscribersRouter = require('./routes/subscribers');
+const contactRouter = require('./routes/contact');
+const crowdfundingRouter = require('./routes/crowdfunding');
 require('dotenv').config();
 
 const app = express();
@@ -268,6 +272,15 @@ app.post('/api/auth/update-password', async (req, res) => {
 
 app.use('/api/events', createEventsRouter(supabase));
 app.use('/api/courts', createCourtsRouter(supabase));
+app.use('/api/open-play', createOpenPlayRouter(supabase));
+app.use('/api/subscribers', subscribersRouter);
+app.use('/api/contact', contactRouter);
+
+// Middleware to inject supabase into crowdfunding routes
+app.use('/api/crowdfunding', (req, res, next) => {
+  req.supabase = supabase;
+  next();
+}, crowdfundingRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });

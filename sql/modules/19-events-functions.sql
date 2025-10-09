@@ -999,6 +999,193 @@ $$;
 COMMENT ON FUNCTION api.get_event_calendar IS 'Returns events for calendar display';
 
 -- ============================================================================
+-- GET COURT SCHEDULE
+-- Returns court bookings and availability for a time range
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION api.get_court_schedule(
+    p_start_time TIMESTAMPTZ,
+    p_end_time TIMESTAMPTZ,
+    p_court_ids UUID[] DEFAULT NULL,
+    p_environment events.court_environment DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    v_result JSON;
+BEGIN
+    SELECT json_build_object(
+        'courts', json_agg(
+            json_build_object(
+                'court_id', c.id,
+                'court_number', c.court_number,
+                'court_name', c.name,
+                'environment', c.environment,
+                'location', c.location,
+                'status', c.status,
+                'bookings', (
+                    SELECT json_agg(
+                        json_build_object(
+                            'event_id', e.id,
+                            'event_title', e.title,
+                            'event_type', e.event_type,
+                            'start_time', e.start_time,
+                            'end_time', e.end_time,
+                            'is_cancelled', e.is_cancelled,
+                            'current_registrations', e.current_registrations,
+                            'max_capacity', e.max_capacity
+                        ) ORDER BY e.start_time
+                    )
+                    FROM events.event_courts ec
+                    JOIN events.events e ON ec.event_id = e.id
+                    WHERE ec.court_id = c.id
+                    AND (e.start_time, e.end_time) OVERLAPS (p_start_time, p_end_time)
+                    AND e.is_cancelled = false
+                ),
+                'available_slots', (
+                    SELECT json_agg(
+                        json_build_object(
+                            'start', slot_start,
+                            'end', slot_end
+                        ) ORDER BY slot_start
+                    )
+                    FROM (
+                        SELECT
+                            GREATEST(p_start_time, LAG(e.end_time, 1, p_start_time) OVER (ORDER BY e.start_time)) AS slot_start,
+                            LEAST(p_end_time, e.start_time) AS slot_end
+                        FROM events.event_courts ec
+                        JOIN events.events e ON ec.event_id = e.id
+                        WHERE ec.court_id = c.id
+                        AND (e.start_time, e.end_time) OVERLAPS (p_start_time, p_end_time)
+                        AND e.is_cancelled = false
+                        UNION ALL
+                        SELECT
+                            GREATEST(p_start_time, COALESCE(MAX(e.end_time), p_start_time)) AS slot_start,
+                            p_end_time AS slot_end
+                        FROM events.event_courts ec
+                        JOIN events.events e ON ec.event_id = e.id
+                        WHERE ec.court_id = c.id
+                        AND e.end_time <= p_end_time
+                        AND e.is_cancelled = false
+                    ) slots
+                    WHERE slot_end > slot_start
+                )
+            ) ORDER BY c.court_number
+        )
+    ) INTO v_result
+    FROM events.courts c
+    WHERE (p_court_ids IS NULL OR c.id = ANY(p_court_ids))
+    AND (p_environment IS NULL OR c.environment = p_environment)
+    AND c.status != 'closed';
+
+    RETURN COALESCE(v_result, json_build_object('courts', '[]'::json));
+END;
+$$;
+
+COMMENT ON FUNCTION api.get_court_schedule IS 'Returns court bookings and availability for a time range';
+
+-- ============================================================================
+-- GET AVAILABLE COURTS
+-- Returns courts that are available for a specific time slot
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION api.get_available_courts(
+    p_start_time TIMESTAMPTZ,
+    p_end_time TIMESTAMPTZ,
+    p_environment events.court_environment DEFAULT NULL,
+    p_min_courts INTEGER DEFAULT 1
+)
+RETURNS JSON
+LANGUAGE plpgsql
+STABLE
+AS $$
+DECLARE
+    v_result JSON;
+BEGIN
+    WITH court_conflicts AS (
+        SELECT
+            c.id AS court_id,
+            c.court_number,
+            c.name AS court_name,
+            c.environment,
+            c.location,
+            c.status,
+            CASE
+                WHEN c.status != 'available' THEN false
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM events.event_courts ec
+                    JOIN events.events e ON ec.event_id = e.id
+                    WHERE ec.court_id = c.id
+                    AND e.is_cancelled = false
+                    AND (e.start_time, e.end_time) OVERLAPS (p_start_time, p_end_time)
+                ) THEN false
+                ELSE true
+            END AS is_available,
+            (
+                SELECT json_agg(
+                    json_build_object(
+                        'event_id', e.id,
+                        'event_title', e.title,
+                        'start_time', e.start_time,
+                        'end_time', e.end_time
+                    ) ORDER BY e.start_time
+                )
+                FROM events.event_courts ec
+                JOIN events.events e ON ec.event_id = e.id
+                WHERE ec.court_id = c.id
+                AND e.is_cancelled = false
+                AND (e.start_time, e.end_time) OVERLAPS (p_start_time, p_end_time)
+            ) AS conflicts
+        FROM events.courts c
+        WHERE (p_environment IS NULL OR c.environment = p_environment)
+    )
+    SELECT json_build_object(
+        'available_courts', (
+            SELECT json_agg(
+                json_build_object(
+                    'court_id', court_id,
+                    'court_number', court_number,
+                    'court_name', court_name,
+                    'environment', environment,
+                    'location', location
+                ) ORDER BY court_number
+            )
+            FROM court_conflicts
+            WHERE is_available = true
+        ),
+        'unavailable_courts', (
+            SELECT json_agg(
+                json_build_object(
+                    'court_id', court_id,
+                    'court_number', court_number,
+                    'court_name', court_name,
+                    'environment', environment,
+                    'location', location,
+                    'status', status,
+                    'conflicts', conflicts
+                ) ORDER BY court_number
+            )
+            FROM court_conflicts
+            WHERE is_available = false
+        ),
+        'total_available', (SELECT COUNT(*) FROM court_conflicts WHERE is_available = true),
+        'meets_minimum', (SELECT COUNT(*) >= p_min_courts FROM court_conflicts WHERE is_available = true),
+        'time_range', json_build_object(
+            'start', p_start_time,
+            'end', p_end_time
+        )
+    ) INTO v_result;
+
+    RETURN v_result;
+END;
+$$;
+
+COMMENT ON FUNCTION api.get_available_courts IS 'Returns courts available for a specific time slot';
+
+-- ============================================================================
 -- GRANT EXECUTE PERMISSIONS
 -- ============================================================================
 
@@ -1010,3 +1197,5 @@ GRANT EXECUTE ON FUNCTION api.update_event_series TO authenticated;
 GRANT EXECUTE ON FUNCTION api.register_for_event TO authenticated;
 GRANT EXECUTE ON FUNCTION api.cancel_event_registration TO authenticated;
 GRANT EXECUTE ON FUNCTION api.get_event_calendar TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION api.get_court_schedule TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION api.get_available_courts TO authenticated, anon;

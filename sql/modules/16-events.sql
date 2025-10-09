@@ -28,7 +28,7 @@ CREATE TYPE events.event_type AS ENUM (
     'non_dupr_tournament',
     'league',
     'clinic',
-    'private_lesson'
+    'private_booking'
 );
 
 CREATE TYPE events.court_surface AS ENUM (
@@ -301,6 +301,14 @@ COMMENT ON TABLE events.event_courts IS 'Courts assigned to events';
 -- Create indexes
 CREATE INDEX idx_event_courts_event ON events.event_courts(event_id);
 CREATE INDEX idx_event_courts_court ON events.event_courts(court_id);
+
+-- Composite index for time-based court availability queries
+CREATE INDEX idx_event_courts_time_range ON events.event_courts(court_id, event_id)
+    INCLUDE (is_primary);
+
+-- Additional index to optimize court booking conflict detection
+CREATE INDEX idx_events_time_overlap ON events.events(start_time, end_time)
+    WHERE is_cancelled = false;
 
 -- ============================================================================
 -- RECURRENCE PATTERNS TABLE

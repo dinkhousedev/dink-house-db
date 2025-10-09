@@ -100,7 +100,9 @@ CREATE TABLE IF NOT EXISTS app_auth.players (
     last_name TEXT NOT NULL,
     display_name TEXT,
     phone TEXT,
-    address TEXT,
+    street_address TEXT,
+    city TEXT,
+    state TEXT,
     date_of_birth DATE,
     membership_level app_auth.membership_level DEFAULT 'guest',
     membership_started_on DATE,
@@ -109,6 +111,7 @@ CREATE TABLE IF NOT EXISTS app_auth.players (
     dupr_rating NUMERIC(3, 2),
     dupr_rating_updated_at TIMESTAMP WITH TIME ZONE,
     club_id UUID,
+    stripe_customer_id TEXT UNIQUE,
     profile JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP

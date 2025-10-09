@@ -1,11 +1,18 @@
-# Environment files
+# Dependencies
+node_modules/
+
+# Environment files (NEVER commit these)
 .env
 .env.local
+.env*.local
 .env.production
+.env.development
+.env.cloud
 
-# Database
-postgres_data/
-pgadmin_data/
+# Logs
+*.log
+npm-debug.log*
+logs/
 
 # IDE
 .vscode/
@@ -13,20 +20,16 @@ pgadmin_data/
 *.swp
 *.swo
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-logs/
-
-# Backup files
-*.backup
-*.sql.bak
+# Database backups
+*.sql.backup
+*.dump
 backup/
 
-# Storage/uploads
-storage/
-uploads/
-node_modules/
+# Testing
+coverage/
+.nyc_output/
+.env.local

@@ -1,0 +1,1 @@
+ERROR:  42809: "launch_subscribers" is not a table

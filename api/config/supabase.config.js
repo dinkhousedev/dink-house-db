@@ -4,20 +4,20 @@
  */
 
 const config = {
-  // Supabase Connection
+  // Supabase Connection (Cloud)
   supabase: {
-    url: process.env.SUPABASE_URL || 'http://localhost:9002',
+    url: process.env.SUPABASE_URL || 'https://wchxzbuuwssrnaxshseu.supabase.co',
     anonKey: process.env.SUPABASE_ANON_KEY || process.env.ANON_KEY,
     serviceKey: process.env.SUPABASE_SERVICE_KEY || process.env.SERVICE_KEY,
   },
 
-  // Database Connection
+  // Database Connection (Cloud)
   database: {
-    host: process.env.DB_HOST || 'localhost',
+    host: process.env.DB_HOST || 'aws-1-us-east-2.pooler.supabase.com',
     port: process.env.DB_PORT || 5432,
-    database: process.env.POSTGRES_DB || 'dink_house',
-    user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || 'postgres',
+    database: process.env.POSTGRES_DB || 'postgres',
+    user: process.env.POSTGRES_USER || 'postgres.wchxzbuuwssrnaxshseu',
+    password: process.env.POSTGRES_PASSWORD,
   },
 
   // JWT Configuration
